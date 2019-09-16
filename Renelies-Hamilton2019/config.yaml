@@ -1,0 +1,9 @@
+SNV_call: "/faststorage/home/sersan/microbioma_termite/Real/SN_test_4/snpCaller/called_SNPs" #Path to called_SNP file
+average_coverage: "/faststorage/home/sersan/microbioma_termite/Real/SN_test_4/SN_test_4.all_cov.tab" # File with average coverage per scaffold
+percentage_coverage: "/faststorage/home/sersan/microbioma_termite/Real/SN_test_4/SN_test_4.all_perc.tab" #File of percentage of coverage by scaffold
+
+mean_depth_filter: 1
+coverage_filter: 20
+output_dir: "/faststorage/home/sersan/microbioma_termite/Real/out_test"
+relation: "1234567" #Relation of the termites. If the same number is given, the coutns of those two will be summed up
+
