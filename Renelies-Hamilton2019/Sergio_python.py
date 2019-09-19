@@ -30,7 +30,7 @@ with open(path_coverage1) as File:
 		dic_vertical[sc] = vertical
 with open(path_coverage2) as File:
         for line in File:
-                if "Sample" in line: continue
+                if ".bam" in line: continue
                 l = line.split()
                 sc = l[0]
                 horizontal = l[1:]
