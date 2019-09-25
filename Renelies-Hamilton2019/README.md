@@ -28,13 +28,14 @@ python Sergio_python.py
 * yaml
 * scipy
 
-** Process **
-SNV_call is opened and read by row. Each row represents a different variant call in a certain scaffold and position.  
-Counts of alternative alleles in each of the avialable samples are used to calculate the frequency of alternative allele per position and per sample. Counts from samples specified to be in the same cluster are summed up.  
+**Process**  
+
+SNV_call is opened and readed by row. Each row represents a different variant call in a certain scaffold and position.  
+Counts of alternative alleles in each of the avialable samples are used to calculate the frequency of alternative allele per position and per sample. Counts from samples specified to be in the same cluster are summed up (config file, realtion).    
 Positions with more than one alternative allele are considered independently (as a totally different position in each of the alleles).  
 A matrix of alternative allele frequency per position is generated, scaffolds are assumed to be from the same reference.  
-Pairwise Manhattan distances are generated for between each of the samples.  
-Fst values are calculated between each pair of samples as described in Schloissnig et al., but assuming multiple alternative alleles are independent and therefore, use using the allele frequence of the alternative and 1-allele frequence as the refrence.
+Pairwise Manhattan distances are generated between each of the samples.  
+Fst values are calculated between each pair of samples as described in Schloissnig et al., but assuming that multiple alternative alleles are independent and therefore, using the allele frequence of the alternative and 1-allele frequence as the refrence frequency.
 
 
 1. Schloissnig S, Arumugam M, Sunagawa S, Mitreva M, Tap J, Zhu A, et al. Genomic variation landscape of the human gut microbiome. Nature. Nature Publishing Group; 2013;493: 45–50. pmid:23222524
