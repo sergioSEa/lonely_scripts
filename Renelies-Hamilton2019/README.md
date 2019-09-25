@@ -37,6 +37,6 @@ A matrix of alternative allele frequency per position is generated, scaffolds ar
 Pairwise Manhattan distances are generated between each of the samples.  
 Fst values are calculated between each pair of samples as described in Schloissnig et al., but assuming that multiple alternative alleles are independent and therefore, using the allele frequence of the alternative and 1-allele frequence as the refrence frequency.
 
-
-1. Schloissnig S, Arumugam M, Sunagawa S, Mitreva M, Tap J, Zhu A, et al. Genomic variation landscape of the human gut microbiome. Nature. Nature Publishing Group; 2013;493: 45–50. pmid:23222524
+1. Costea, Paul Igor, et al. "metaSNV: a tool for metagenomic strain level analysis." PLoS One 12.7 (2017): e0182392.
+2. Schloissnig S, Arumugam M, Sunagawa S, Mitreva M, Tap J, Zhu A, et al. Genomic variation landscape of the human gut microbiome. Nature. Nature Publishing Group; 2013;493: 45–50. pmid:23222524
 
