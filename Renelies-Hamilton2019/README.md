@@ -20,7 +20,7 @@ Input values should be written to **config.yaml**
  - - - -
 
 **RUN**    
-python SNV_filter.py  
+python SNV_filtering.py  
 
 **Requirements**  
 * python 3 or above
