@@ -3,11 +3,21 @@ from pathlib import Path
 import yaml
 from subprocess import call
 
-with open("config.yaml", 'r') as stream:
-	try:
-		input_dic = yaml.safe_load(stream)
-	except yaml.YAMLError as exc:
-		print(exc)
+try: argument =  sys.argv[1]
+except: argument = None
+
+if argument:
+	with open(argument, 'r') as stream:
+		try:
+			input_dic = yaml.safe_load(stream)
+		except yaml.YAMLError as exc:
+			print(exc)
+else:		
+	with open("config.yaml", 'r') as stream:
+		try:
+			input_dic = yaml.safe_load(stream)
+		except yaml.YAMLError as exc:
+			print(exc)
 
 
 FILE = input_dic['SNV_call']
