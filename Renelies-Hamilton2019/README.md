@@ -15,7 +15,7 @@ Input values should be written to **config.yaml**
   #### Others 
   * output_dir: path were output files will be saved  
   * relation:  Relation of the files given. The nucleotide counts observed from samples that share the same relation will be summed up.
-    * Example: 1122 
+    * Example: 1,1,2,2 
     * Four samples were mapped to the same reference. Two of them belong to one cluster while the other two to another. Order should be the same than the sample's order observed in SNV_call
  - - - -
 

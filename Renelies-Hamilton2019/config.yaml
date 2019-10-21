@@ -5,5 +5,5 @@ percentage_coverage: "/faststorage/home/sersan/microbioma_termite/Real/SN_test_4
 mean_depth_filter: 1
 coverage_filter: 20
 output_dir: "/faststorage/home/sersan/microbioma_termite/Real/out_test"
-relation: "1234567" #Relation of the termites. If the same number is given, the coutns of those two will be summed up
+relation: "1,2,3,4,5,6,7" #Relation of the termites. Counts from the same numbered sampled are added up
 
