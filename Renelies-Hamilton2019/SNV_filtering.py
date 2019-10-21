@@ -2,6 +2,7 @@ import numpy as np
 from pathlib import Path
 import yaml
 from subprocess import call
+import sys
 
 try: argument =  sys.argv[1]
 except: argument = None
@@ -47,10 +48,16 @@ with open(path_coverage2) as File:
                 dic_horizontal[sc] = horizontal
 ##Check if number of samples given in relatedness and the number of samples in the files match
 for item in dic_horizontal.keys():
-	if len(relatedness) != len(dic_horizontal[item]):
+	r = relatedness.split(",")
+	if len(r) != len(dic_horizontal[item]):
 		expected =  len(dic_horizontal[item])
-		given = len(relatedness)
-		exit("Error: Number of samples given in 'Relation' does not match the number of samples being analyzed. Expected: {Ex}, Given: {Giv}".format(Ex=expected, Giv=given))
+		if len(relatedness) == 0:
+			for number in range(expected):
+				relatedness += str(number) + ","
+			relatedness = relatedness.rstrip(",")
+		else:
+			given = len(r)
+			exit("Error: Number of samples given in 'Relation' does not match the number of samples being analyzed. Expected: {Ex}, Given: {Giv}".format(Ex=expected, Giv=given))
 	else: break
 
 if not Path(outdir).exists():
@@ -66,6 +73,11 @@ output = outdir + "/frequency_SNP.txt"
 
 with open(missing,"w") as F: 
 	pass
+with open(output,"w") as G:
+	pass
+
+print("Saving filtered out SNP in "+ missing)
+print("Saving final SNP set in "+ output)
 
 def create_vector(Input,depth,coverage,vec=relatedness):
 	#FILTER BY VERTICAL COVERAGE (MEAN DEPTH OF A SCAFFOLD) --> VC
@@ -82,7 +94,7 @@ def create_vector(Input,depth,coverage,vec=relatedness):
 	#Taking into account vector of relations:
 	dic_elements = {}
 	counter = 0 
-	for element in vec:
+	for element in vec.split(","):
 		if element not in dic_elements:
 			dic_elements[element] = []
 		dic_elements[element].append(counter)
@@ -128,8 +140,8 @@ def Iteration():
 			counts = create_vector(total_counts,vertical_filter,horizontal_filter)
 			#Get samples where there's no counts in that position
 			missi = counts[counts==0]
-		
-			if len(missi) >= len(relatedness) -1:
+
+			if len(missi) >= len(relatedness.split(",")) -1:
 				with open(missing, "a") as R:
 					R.write(line)
 					continue
@@ -148,8 +160,10 @@ def Iteration():
 						if MATRIX_snp == None: MATRIX_snp = frequency
 						else: MATRIX_snp = np.concatenate(MATRIX_snp,frequency)
 					except: MATRIX_snp = np.vstack((MATRIX_snp,frequency))
-					with open(output,"w") as G:
-						G.write(name +" "+ str(frequency[0]) +" "+ str(frequency[1]))
+					frequency = [ str(x) for x in list(frequency) ]
+					with open(output,"a") as G:
+
+						G.write(name +" "+ " ".join(frequency) + "\n")
 
 			else:
 				v = alt_counts.split(".|")
@@ -163,8 +177,10 @@ def Iteration():
 					if MATRIX_snp == None: MATRIX_snp = frequency
 					else: MATRIX_snp = np.concatenate(MATRIX_snp,frequency)
 				except:  MATRIX_snp = np.vstack((MATRIX_snp,frequency))
-				with open(output,"w") as G:
-					 G.write(name +" "+ str(frequency[0]) +" "+ str(frequency[1]))
+				frequency = [ str(x) for x in list(frequency) ]
+				with open(output,"a") as G:
+					
+					 G.write(name +" "+ " ".join(frequency)+"\n")
 
 	return(MATRIX_snp)
 def distance(x,y):
