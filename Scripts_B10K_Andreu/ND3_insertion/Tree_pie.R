@@ -180,6 +180,7 @@ Crocodyla = which(grepl("mrcaott31216ott35864", Tree3$node.label)) #crocodylia
 Aves = which(grepl("Aves", Tree3$node.label)) #Aves
 Passeriformes = which(grepl("Passeriformes", Tree3$node.label)) #passserines
 
+Ancestor_all = which(grepl("mrcaott59ott1662", Tree3$node.label))
 
 Testudines2 = which(grepl("mrcaott59ott3697",Tree3$node.label))
 Testudines3 = which(grepl("Pleurodira",Tree3$node.label))
@@ -187,8 +188,8 @@ Testudines4 = which(grepl("mrcaott2982ott235762",Tree3$node.label))
 Testudines5 = which(grepl("mrcaott3697ott810244",Tree3$node.label))
 Testudines6 = which(grepl("mrcaott59ott14158",Tree3$node.label))
 
-data_piechart = LL_nodes[c(Turtle,Serpentis,Bifurcata,Crocodyla,Aves,Passeriformes,Testudines2,Testudines3,Testudines4,Testudines4,Testudines6),]
-data_piechart = cbind(data_piechart, c(Turtle,Serpentis,Bifurcata,Crocodyla,Aves,Passeriformes,Testudines2,Testudines3,Testudines4,Testudines4,Testudines6)+leaf_size)
+data_piechart = LL_nodes[c(Ancestor_all,Turtle,Serpentis,Bifurcata,Crocodyla,Aves,Passeriformes,Testudines2,Testudines3,Testudines4,Testudines4,Testudines6),]
+data_piechart = cbind(data_piechart, c(Ancestor_all,Turtle,Serpentis,Bifurcata,Crocodyla,Aves,Passeriformes,Testudines2,Testudines3,Testudines4,Testudines4,Testudines6)+leaf_size)
 colnames(data_piechart) = c("-", "A","T","C","G", "node")
 data_piechart = as_tibble(data_piechart)
 
@@ -332,7 +333,7 @@ for (i in seq(1,length(list_subsets))){
   Desc = c(Desc,vector_nodes[i]+leaf_size)
   Desc = sort(Desc)
   
-
+  
  
   
   if (i==2){
@@ -367,8 +368,69 @@ for (i in seq(1,length(list_subsets))){
 
 
 
+##Bird orders
+orders_info = read_tsv("All_bird_orders.tsv", col_names=F)
+orders_info %>% arrange(X1) %>% filter(X1 %in% Data_birds$X1) -> orders_info
+Data_birds %>% mutate(Family = orders_info$X2, Order= orders_info$X3) -> Data_birds
 
+Data_birds %>% group_by(Order, X2) %>% summarise(Number = n()) %>% spread(X2, Number) -> Information_birds_orders
+Information_birds_orders %>% mutate(c = ifelse(is.na(c), 0, c),g = ifelse(is.na(g), 0, g),t = ifelse(is.na(t), 0, t), `-`=ifelse(is.na(`-`), 0, `-`) ) %>%
+  mutate(Total = `-`+c + g + t, Frq_gap = ifelse(is.na(`-`),0, `-`/Total)) -> Order_insertion
+Order_insertion %>% ggplot(aes(x=Order,y=Frq_gap)) + geom_bar(stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1))+ 
+  geom_text(aes(y= -0.01, label=Total)) -> Freq_insertion_by_order
+
+ggsave(plot = Freq_insertion_by_order, filename = "Birds_Insertion_Order.pdf")
+ggsave(plot = Freq_insertion_by_order, filename = "Birds_Insertion_Order.png")
 #Kernel "gaussian", "rectangular", "triangular", "epanechnikov", "biweight", "cosine" or "optcosine"
+
+
+
+
+Jarvis = read.tree("/Users/Sergio/Documents/Paper/Research_Assitant/Chronogram01.TENT.ExAML.tre")
+INFO = read_delim("/Users/Sergio/Documents/Paper/Research_Assitant/Analysis_Mtc_number/info/Trait_data2.csv", delim = ";")
+INFO$Latin_name
+
+new_lab = vector()
+n = 0
+for (label in Jarvis$tip.label){
+  l = strsplit(label,"_")[[1]][1:2]
+  nl = paste(l, collapse = "_")
+  if (nl == "Tinamus_major"){
+    nl = "Tinamus_guttatus"
+  } else if(nl == "Manacus_vitellinus"){
+    nl = "Manacus_manacus"
+  }
+  INFO %>% filter(Latin_name == nl) -> S
+  if (S$order %in% new_lab){
+    S = paste(c(S$order,as.character(n)), collapse="")
+  }else{ S = S$order}
+  n = n+1
+  new_lab = c(new_lab,S)
+  
+}
+
+Jarvis$tip.label = new_lab
+Jarvis$tip.label[Jarvis$tip.label=="Sphenisciformes24"] = "Apterygiformes"
+drop.tip(Jarvis, c("Caprimulgiformes14","Caprimulgiformes15","Passeriformes35","Passeriformes36","Passeriformes37","Passeriformes34")) -> p
+
+match(Order_insertion$Order, Jarvis$tip.label)
+Order_insertion %>% filter(Order %in% Jarvis$tip.label) -> Order_insertion
+keep.tip(Jarvis, Order_insertion$Order) -> Jarvis
+Order_insertion[match(Jarvis$tip.label,Order_insertion$Order),] -> Order_insertion
+
+
+
+library(ggstance)
+
+ggtree(Jarvis, layout = "rectangular")  + theme_tree2() + geom_tiplab(offset = -20,vjust = 1 )  -> p  #+ labs(caption = "Divergence time")
+revts(p) + theme(plot.margin=margin(60,60,60,60)) -> p #+ xlim(-105,14) -> p
+facet_plot(p, panel="Frequency Insertion", data=Order_insertion, geom= geom_barh, mapping=aes(x=Order_insertion$Frq_gap),stat="identity") -> p2
+facet_plot(p2,panel="Frequency Insertion", data=Order_insertion, geom=geom_text, mapping=aes(x= -0.05, label=Order_insertion$Total) ) -> p3
+
+ggsave(plot = p3, filename = "TreeBirds_Insertion_Order.pdf")
+ggsave(plot = p3, filename = "TreeBirds_Insertion_Order.png")
+
+
 
 ##Entrophy
 
