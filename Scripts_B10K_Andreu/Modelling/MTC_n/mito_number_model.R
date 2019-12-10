@@ -42,19 +42,24 @@ data %>% mutate(main_diet = ifelse(main_diet %in% high_avail, "CARN", ifelse(mai
 data %>% group_by(`Tissue type`) %>% summarise(n())
 
 #see the effect of Coverage and length
-data %>% ggplot(aes(y=`Ratio of Median Depth`, x=Coverage_mtc)) + geom_point() + theme_bw() -> mtc_effect
-data %>% ggplot(aes(y=`Ratio of Median Depth`, x=Coverage_ncl)) + geom_point() + theme_bw()   + 
+data %>% ggplot(aes(y=`Ratio of Median Depth`, x=Coverage_mtc)) + geom_point() + theme_bw()+ 
+  labs(y='Estimation mitochondrial number', x= "Mitochondrial genome breadth of coverage") -> mtc_effect
+data %>% ggplot(aes(y=`Ratio of Median Depth`, x=Coverage_ncl)) + geom_point() + theme_bw()   + labs(y='Estimation mitochondrial number', x= "Nuclear genome breath of coverage") +
   geom_vline(xintercept = 0.9, linetype="dashed",color = "red", size=1.5) -> ncl_effect
 data %>% ggplot(aes(y=`Ratio of Median Depth`, x=max_sixe)) + geom_point() + theme_bw()  + 
-  geom_vline(xintercept = 10000, linetype="dashed",color = "red", size=1.5)-> size_effect
+  geom_vline(xintercept = 10000, linetype="dashed",color = "red", size=1.5)+ 
+  labs(y='Estimation mitochondrial number', x= "Mitochondrial size (bp)") -> size_effect
 
 ggarrange(mtc_effect, ncl_effect, size_effect, labels = c("A", "B", "C"), ncol = 3, nrow = 1) -> Fig0
 ggsave(filename = "Biases.pdf", plot = Fig0)
+ggsave(filename = "Biases.png", plot = Fig0)
 
 #Filter: 26 smaples.  Other filter: mtc, ncl>0.8, size> 10K --> 162/166
 data %>% filter(Coverage_mtc>=0.8 & Coverage_ncl>=0.9 & max_sixe > 14000 & max_sixe < 19000 ) -> data_soft
 data %>% filter(Coverage_ncl>=0.9 & max_sixe > 10000) -> data_soft
 #183/176
+
+
 
 #data %>% ggplot(aes(x=factor(migration),y=`Ratio of Median Depth`)) + geom_boxplot() + theme_bw()
 
@@ -62,14 +67,16 @@ data %>% filter(Coverage_ncl>=0.9 & max_sixe > 10000) -> data_soft
 
 #Mass trend
 data_soft %>% ggplot(aes(y=log(`Ratio of Median Depth`),x=log(unsexed_mass))) + geom_point(size=4) +
-theme_bw() + geom_smooth(method='lm',formula=y~x) + theme(axis.title.x = element_text(size=TS), axis.title.y = element_text(size=TS),axis.text=element_text(size=12))-> mass_trend
+theme_bw() + geom_smooth(method='lm',formula=y~x) + theme(axis.title.x = element_text(size=TS), axis.title.y = element_text(size=TS),axis.text=element_text(size=12))+
+  labs(y='Estimation mitochondrial number', x= "ln(Body mass (g))")  -> mass_trend
 
 summary(lm(log(`Ratio of Median Depth`) ~ log(unsexed_mass), data))
 
 
 #Latitude trend
 data_soft %>% ggplot(aes(y=log(`Ratio of Median Depth`),x=log(abs(Latitude)))) + geom_point(size=4) +
-  theme_bw() + geom_smooth(method='lm',formula=y~x) + theme(axis.title.x = element_text(size=TS), axis.title.y = element_text(size=TS),axis.text=element_text(size=12))-> latitude_trend
+  theme_bw() + geom_smooth(method='lm',formula=y~x) + theme(axis.title.x = element_text(size=TS), axis.title.y = element_text(size=TS),axis.text=element_text(size=12)) + 
+  labs(y='Estimation mitochondrial number', x= "ln(abs(Latitude (degrees)))")-> latitude_trend
 summary(lm(log(`Ratio of Median Depth`) ~ log(abs(Latitude)), data))
 
 summary(lm(log(`Ratio of Median Depth`) ~ log(abs(Latitude)):factor(Order), data))
@@ -84,8 +91,8 @@ summary(lm(log(`Ratio of Median Depth`) ~ Temperature, data))
 
 data_soft %>% ggplot(aes(x=abs(Latitude),y=Temperature)) + geom_point(size=4) + theme_bw() + geom_smooth(method='lm',formula=y~x) + theme(axis.title.x = element_text(size=TS), axis.title.y = element_text(size=TS),axis.text=element_text(size=12))-> sup_T_Latitude
 
-
-
+ggsave("T_vs_Latitude.pdf",sup_T_Latitude)
+ggsave("T_vs_Latitude.png",sup_T_Latitude)
 #Multiple regression
 summary(lm(log(`Ratio of Median Depth`) ~ log(abs(Latitude)) + log(unsexed_mass) , data))
 
@@ -100,7 +107,9 @@ summary(lm(log(unsexed_mass) ~ log(abs(Latitude)) + log(unsexed_mass) , data))
 ###
 
 ggarrange(mass_trend,latitude_trend, labels = c("A", "B"), ncol = 2, nrow = 1) -> Fig1 
-ggsave("../Figures/Factors_miton_number.pdf", Fig1)
+#ggsave("../Figures/Factors_miton_number.pdf", Fig1)
+#ggsave("../Figures/Factors_miton_number.png", Fig1)
+
 
 ggsave("../Figures/Sup/Sup_colinearity.pdf", colinearity)
 
@@ -132,12 +141,26 @@ Model_2 = pgls(log(`Ratio of Median Depth`) ~ log(abs(Latitude)) + log(unsexed_m
 summary(Model_2)
 #Adjusted R-squared: 0.1011
 
+###MR with other Latitude values
+data_soft %>%  dplyr::select(ID, `Ratio of Median Depth`,Latitude,unsexed_mass, Max_latitude, Min_latitude) %>% as.data.frame() -> mm
+comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
+Model_2.1 = pgls(log(`Ratio of Median Depth`) ~ log(abs(Max_latitude)) + log(unsexed_mass), comp, lambda="ML")
+summary(Model_2.1)
+
+data_soft %>%  dplyr::select(ID, `Ratio of Median Depth`,Latitude,unsexed_mass, Max_latitude, Min_latitude) %>% as.data.frame() -> mm
+comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
+Model_2.2 = pgls(log(`Ratio of Median Depth`) ~ log(abs(Min_latitude)) + log(unsexed_mass), comp, lambda="ML")
+summary(Model_2.2)
+
+
+
 ##Multiple with Temperature
 
 data_soft %>%  dplyr::select(ID, `Ratio of Median Depth`,Latitude,unsexed_mass,Temperature) %>% as.data.frame() -> mm
 comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
 Model_25 = pgls(log(`Ratio of Median Depth`) ~ log(unsexed_mass) + Temperature, comp, lambda="ML")
 summary(Model_25)
+
 
 data_soft %>%  dplyr::select(ID, `Ratio of Median Depth`,Latitude,unsexed_mass) %>% as.data.frame() -> mm
 comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
@@ -171,18 +194,37 @@ shapiro.test(Model_4$phyres)
 #Mass trend
 Mass_data = tibble(Y=Model_0$y, X=Model_0$x[,2], Fitted=Model_0$fitted )
 Mass_data %>% ggplot(aes(y=Y,x=X)) + geom_point(size=4) + theme_bw() + geom_line(aes(x=X, y=Fitted),col="blue") +
-  theme(axis.title.x = element_text(size=TS), axis.title.y = element_blank()) + xlab("ln(Body Mass (grams))") -> mass_trend
+  theme(axis.title.x = element_text(size=TS), axis.title.y = element_blank()) + labs(x="ln(Body Mass (grams))",y='Estimation mitochondrial number') -> mass_trend
 #Latitude trend
 Lat_data = tibble(Y=Model_1$y, X=Model_1$x[,2], Fitted=Model_1$fitted )
 Lat_data %>% ggplot(aes(y=Y,x=X)) + geom_point(size=4) + theme_bw() + geom_line(aes(x=X, y=Fitted),col="blue") + 
-  theme(axis.title.x = element_text(size=TS), axis.title.y = element_blank()) + xlab("ln(Latitude (degrees))") ->Lat_trend
+  theme(axis.title.x = element_text(size=TS), axis.title.y = element_blank()) + labs(x="ln(Latitude (degrees))",y='Estimation mitochondrial number') ->Lat_trend
 
 
 ggarrange(mass_trend,Lat_trend, labels = c("A", "B"), ncol = 1, nrow = 2) -> Fig1 
 annotate_figure(Fig1, left=text_grob("ln(Estimation of mitochondria number)", size=TS,rot = 90)) -> Fig1
-#ggsave("../Figures/Factors_miton_number.pdf", Fig1)
+ggsave("../Figures/Factors_miton_number.pdf", Fig1)
+
+ggsave("../Figures/Factors_miton_number.png", Fig1)
 
 
+
+
+###########################Distribtuion data###############
+Lat_data = read_csv("/Users/Sergio/Documents/Paper/Research_Assitant/Distribution_data2.csv")
+Lat_data %>% distinct(Sp,.keep_all = TRUE) %>% arrange(Sp) -> Lat_data
+dim(data_soft) 
+data_soft %>% filter(Latin_name %in% Lat_data$Sp) %>% arrange(Latin_name) -> data_soft
+Lat_data %>% filter(Sp %in% data_soft$Latin_name) -> Lat_data
+data_soft %>% mutate(Max_latitude=Lat_data$mx, Min_latitude=Lat_data$mn, Lat_Range= abs(Max_latitude-Min_latitude)) -> data_soft
+
+
+data_soft %>% filter(Lat_Range < 30) -> s_data_soft
+
+s_data_soft %>%  dplyr::select(ID, `Ratio of Median Depth`,Latitude,unsexed_mass) %>% as.data.frame() -> mm
+comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
+Model_2 = pgls(log(`Ratio of Median Depth`) ~ log(abs(Latitude)) + log(unsexed_mass), comp, lambda="ML")
+summary(Model_2)
 
 
 ##############################################################################
@@ -277,9 +319,9 @@ b_overl4 %>% mutate(Mass_mine=d_overl4$unsexed_mass, Estimation=d_overl4$`Ratio 
 
 #Matching sets
 
-x = list("Fristoe" = b_overl$Species, "Uyeda" = b_overl2$Other_naming, "Londono" = b_overl3$Species)
-library("VennDiagram")
-venn.diagram(x, "venn_BMR.tiff")
+#x = list("Fristoe" = b_overl$Species, "Uyeda" = b_overl2$Other_naming, "Londono" = b_overl3$Species)
+#library("VennDiagram")
+#venn.diagram(x, "venn_BMR.tiff")
 
 
 #O2 consumption to watts

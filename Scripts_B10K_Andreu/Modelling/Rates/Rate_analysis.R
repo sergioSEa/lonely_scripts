@@ -108,11 +108,18 @@ rbind(Data_nobackpass_root,iqtree_nobackpass_root) -> Data_nobackpass_root
 
 
 
+Lat_data = read_csv("/Users/Sergio/Documents/Paper/Research_Assitant/Distribution_data2.csv")
 
-
-
-
-
+Add_lat_info = function(data,Lat=Lat_data){
+  Lat %>% distinct(Sp,.keep_all = TRUE) %>% arrange(Sp) -> Lat_data
+  data %>% filter(Latin_name %in% Lat_data$Sp) %>% arrange(Latin_name) -> data
+  Lat_data %>% filter(Sp %in% data$Latin_name) -> Lat_data
+  data %>% mutate(Max_latitude=Lat_data$mx, Min_latitude=Lat_data$mn, Lat_Range= abs(Max_latitude-Min_latitude)) -> data
+  #data %>% mutate(Latitude = Max_latitude) -> data
+  #data %>% filter(Lat_Range < 30) -> data
+  return(data)
+  
+}
 
 
 
@@ -150,12 +157,15 @@ Perform_analisys = function(data,outcome,Set){
   ####Multiple regression PGLS
   for (Protein_n in unique(data$Protein)){
     Data = filter(data, Protein == Protein_n)
+    Data = Add_lat_info(Data)
+    if(dim(Data)[1]<10){next}
     Data %>%  dplyr::select(ID, syn, nosyn,Latitude,unsexed_mass,ML_branch) %>% as.data.frame() -> mm
     comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
     #MAKE LOG SO RESIDUALS ARE NORMAL
     Model_syn = pgls(syn ~ log(abs(Latitude)) + log(unsexed_mass), comp, lambda=1)
     Model_nosyn = pgls(nosyn ~ log(abs(Latitude)) + log(unsexed_mass), comp, lambda=1)
     Model_branch = pgls(ML_branch ~ log(abs(Latitude)) + log(unsexed_mass), comp, lambda=1)
+    
     n =0
     L <- vector("list",3)
     L[[1]] = Model_syn
@@ -236,7 +246,13 @@ Perform_analisys = function(data,outcome,Set){
     geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1) + facet_wrap(~Model, scales = "free")  -> effect_pval_lat
   
   
-   
+  print(Latitude_dN_dS)
+  print(mass_dN_dS)
+  print(Latitude_effect)
+  print(Mass_effect)
+  print(effect_pval_mass)
+  print(effect_pval_lat) 
+
   ggsave(plot = Latitude_dN_dS,filename = paste(outcome,"_Latitude_pval.pdf",collapse=""))
   ggsave(plot = mass_dN_dS,filename = paste(outcome,"_mass_pval.pdf",collapse=""))
 
@@ -247,15 +263,11 @@ Perform_analisys = function(data,outcome,Set){
   ggsave(plot = Latitude_effect,filename = paste(outcome,"_Latitude_effect.pdf",collapse=""))
   ggsave(plot = Mass_effect,filename = paste(outcome,"_mass_effect.pdf",collapse=""))
   
- 
   
-  print(Latitude_dN_dS)
-  print(mass_dN_dS)
-  print(Latitude_effect)
-  print(Mass_effect)
-  print(effect_pval_mass)
-  print(effect_pval_lat)
+  RESULTS_hy %>% filter(FDR_mass < 0.05) %>% group_by(Model) %>% summarise(Number=n(), Total=dim(RESULTS_hy)[1]/3) -> check
+  print(check)
   
+  return(RESULTS_hy)
 }
 ##################################################
 
@@ -263,10 +275,10 @@ Perform_analisys = function(data,outcome,Set){
 
 
 ############### COMPLETE
-Data_root %>%dplyr::select(ID_organism, Protein, Rate, Tree, unsexed_mass, Latitude, Order, Latin_name,ID) %>% spread(Tree, Rate) -> Data_root
+Data_root %>%dplyr::select(ID_organism, Protein, Rate, Tree, unsexed_mass, Latitude, Order, Latin_name,ID, Temperature) %>% spread(Tree, Rate) -> Data_root
 Data_root %>% mutate(dNdS_ratio= nosyn/syn, syn= as.numeric(syn), nosyn= as.numeric(nosyn)) -> Data_root
 
-Data_tips %>%dplyr::select(ID_organism, Protein, Rate, Tree, unsexed_mass, Latitude, Order, Latin_name,ID) %>% spread(Tree, Rate) -> Data_tips
+Data_tips %>%dplyr::select(ID_organism, Protein, Rate, Tree, unsexed_mass, Latitude, Order, Latin_name,ID,Temperature) %>% spread(Tree, Rate) -> Data_tips
 Data_tips %>% mutate(dNdS_ratio= nosyn/syn, syn= as.numeric(syn), nosyn= as.numeric(nosyn)) -> Data_tips
 ##############
 
@@ -318,31 +330,152 @@ Data_nobackpass_tips %>% mutate(dNdS_ratio= nosyn/syn, syn= as.numeric(syn), nos
 
 
 
-Perform_analisys(Data_root,"../Figures/Rates/Total_root","MTC")
+total_d = Perform_analisys(Data_root,"../Figures/Rates/Total_root","MTC")
 Perform_analisys(Data_tips,"../Figures/Rates/Total_tips","MTC")
 
 
-Perform_analisys(Data_pass_root,"../Figures/Rates/Pass_root", "MTC")
+pass_d =Perform_analisys(Data_pass_root,"../Figures/Rates/Pass_root", "MTC")
 Perform_analisys(Data_pass_tips,"../Figures/Rates/Pass_tips", "MTC")
 
-Perform_analisys(Data_nopass_root,"../Figures/Rates/nopass_root","MTC")
+nopass_d = Perform_analisys(Data_nopass_root,"../Figures/Rates/nopass_root","MTC")
 Perform_analisys(Data_nopass_tips,"../Figures/Rates/nopass_tips", "MTC")
 
-Perform_analisys(Data_back_root,"../Figures/Rates/Back_root","Background")
+background_d = Perform_analisys(Data_back_root,"../Figures/Rates/Back_root","Background")
 Perform_analisys(Data_back_tips,"../Figures/Rates/Back_tips", "Background")
 
 
-Perform_analisys(Data_backpass_root,"../Figures/Rates/Backpass_root","Background")
+backgroundpass_d = Perform_analisys(Data_backpass_root,"../Figures/Rates/Backpass_root","Background")
 Perform_analisys(Data_backpass_tips,"../Figures/Rates/Backpass_tips", "Background")
 
 
-Perform_analisys(Data_nobackpass_root,"../Figures/Rates/noBackpass_root","Background")
+backgroundnopass_d = Perform_analisys(Data_nobackpass_root,"../Figures/Rates/noBackpass_root","Background")
 Perform_analisys(Data_nobackpass_tips,"../Figures/Rates/noBackpass_tips", "Background")
 
 
+###########################################################Make plots
+##########################################################
+
+outcomes_lat = vector("list",length(unique(total_d$Model)))
+outcomes_mass = vector("list",length(unique(total_d$Model)))
+outcomes_latpass = vector("list",length(unique(total_d$Model)))
+outcomes_masspass = vector("list",length(unique(total_d$Model)))
+outcomes_latnopass = vector("list",length(unique(total_d$Model)))
+outcomes_massnopass = vector("list",length(unique(total_d$Model)))
+n = 1
+for (M in unique(total_d$Model)){
+  ###########Total########
+  total_d %>% filter(Model==M) -> TD
+  background_d %>% filter(Model==M) -> TBD
+  TD %>% ggplot(aes(x=Mass_Estimation,y=-log(Mass_pvalue))) + geom_point(aes(col=FDR_mass < 0.05,shape=Protein=="TOTAL"),size=3) + theme_bw() + geom_hline(yintercept= -log(0.05), linetype="dashed",  color = "black", size=1) + ylim(0,15) + geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1)  -> effect_pval_mass
+  TD %>% ggplot(aes(x=Latitude_Estimation,y=-log(Latitude_pvalue))) + geom_point(aes(col=FDR_lat < 0.05,shape=Protein=="TOTAL"),size=3) + theme_bw() + geom_hline(yintercept= -log(0.05), linetype="dashed",  color = "black", size=1) +  geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1) + ylim(0,15)  -> effect_pval_lat
+  TBD %>%  ggplot(aes(x=-log(Latitude_pvalue),fill=FDR_lat<0.05)) + geom_density(alpha=0.3, aes(y=..count..)) + theme_bw() + theme_void() + theme(legend.position="none") + rotate()+ xlim(0,15) -> lat_distribution
+  TBD %>%  ggplot(aes(x=-log(Mass_pvalue),fill=FDR_mass<0.05)) + geom_density(alpha=0.3, aes(y=..count..)) + theme_void() + theme(legend.position="none") + rotate()+ xlim(0,15) -> mass_distribution
+  
+  y_lat <- lat_distribution + clean_theme()
+  y_mass <- mass_distribution + clean_theme()
+  if (n == 1){
+  ggarrange(effect_pval_mass, y_mass, 
+            ncol = 2,  align = "hv", 
+            widths = c(1, 0.5), heights = c(1, 2),
+            common.legend = TRUE) -> Mass_plot
+
+  ggarrange(effect_pval_lat, y_lat, 
+            ncol = 2,  align = "hv", 
+            widths = c(1, 0.5), heights = c(1, 2),
+            common.legend = TRUE) -> Lat_plot
+  }else{
+    ggarrange(effect_pval_mass, y_mass, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2), common.legend = TRUE, legend=F) -> Mass_plot
+    
+    ggarrange(effect_pval_lat, y_lat, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2), common.legend = TRUE, legend=F) -> Lat_plot
+  }
+  outcomes_lat[[n]] =  Lat_plot
+  outcomes_mass[[n]] = Mass_plot
+  
+  #############################
+  ###########Passseriformes###
+  pass_d%>% filter(Model==M) -> TD
+  backgroundpass_d%>% filter(Model==M) -> TBD
+  TD %>% ggplot(aes(x=Mass_Estimation,y=-log(Mass_pvalue))) + geom_point(aes(col=FDR_mass < 0.05,shape=Protein=="TOTAL"),size=3) + theme_bw() + geom_hline(yintercept= -log(0.05), linetype="dashed",  color = "black", size=1) + ylim(0,15) + geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1)  -> effect_pval_mass
+  TD %>% ggplot(aes(x=Latitude_Estimation,y=-log(Latitude_pvalue))) + geom_point(aes(col=FDR_lat < 0.05,shape=Protein=="TOTAL"),size=3) + theme_bw() + geom_hline(yintercept= -log(0.05), linetype="dashed",  color = "black", size=1) +  geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1) + ylim(0,15)  -> effect_pval_lat
+  TBD %>%  ggplot(aes(x=-log(Latitude_pvalue),fill=FDR_lat<0.05)) + geom_density(alpha=0.3, aes(y=..count..)) + theme_bw() + theme_void() + theme(legend.position="none") + rotate()+ xlim(0,15) -> lat_distribution
+  TBD %>%  ggplot(aes(x=-log(Mass_pvalue),fill=FDR_mass<0.05)) + geom_density(alpha=0.3, aes(y=..count..)) + theme_void() + theme(legend.position="none") + rotate()+ xlim(0,15) -> mass_distribution
+  y_lat <- lat_distribution + clean_theme()
+  y_mass <- mass_distribution + clean_theme()
+  if (!n ==1){
+  ggarrange(effect_pval_mass, y_mass, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2),common.legend = TRUE,legend=F) -> Mass_plot
+  ggarrange(effect_pval_lat, y_lat, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2),common.legend = TRUE,legend=F) -> Lat_plot
+  } else{
+    ggarrange(effect_pval_mass, y_mass, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2),common.legend = TRUE) -> Mass_plot
+    ggarrange(effect_pval_lat, y_lat, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2),common.legend = TRUE) -> Lat_plot
+  }
+  outcomes_latpass[[n]] =  Lat_plot
+  outcomes_masspass[[n]] = Mass_plot
+  
+  
+  ##############################
+  ###########No Passeriformes###
+  nopass_d%>% filter(Model==M) -> TD
+  backgroundnopass_d%>% filter(Model==M) -> TBD
+  TD %>% ggplot(aes(x=Mass_Estimation,y=-log(Mass_pvalue))) + geom_point(aes(col=FDR_mass < 0.05, shape=Protein=="TOTAL"),size=3) + theme_bw() + geom_hline(yintercept= -log(0.05), linetype="dashed",  color = "black", size=1) + ylim(0,15) + geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1)  -> effect_pval_mass
+  TD %>% ggplot(aes(x=Latitude_Estimation,y=-log(Latitude_pvalue))) + geom_point(aes(col=FDR_lat < 0.05,shape=Protein=="TOTAL"),size=3) + theme_bw() + geom_hline(yintercept= -log(0.05), linetype="dashed",  color = "black", size=1) +  geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1) + ylim(0,15)  -> effect_pval_lat
+  TBD %>%  ggplot(aes(x=-log(Latitude_pvalue),fill=FDR_lat<0.05)) + geom_density(alpha=0.3, aes(y=..count..)) + theme_bw() + theme_void() + theme(legend.position="none") + rotate()+ xlim(0,15) -> lat_distribution
+  TBD %>%  ggplot(aes(x=-log(Mass_pvalue),fill=FDR_mass<0.05)) + geom_density(alpha=0.3, aes(y=..count..)) + theme_void() + theme(legend.position="none") + rotate()+ xlim(0,15) -> mass_distribution
+  y_lat <- lat_distribution + clean_theme()
+  y_mass <- mass_distribution + clean_theme()
+  if (!n==1){
+    ggarrange(effect_pval_mass, y_mass, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2),common.legend = TRUE, legend=F) -> Mass_plot
+    ggarrange(effect_pval_lat, y_lat, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2),common.legend = TRUE, legend=F) -> Lat_plot
+  }else{
+  ggarrange(effect_pval_mass, y_mass, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2),common.legend = TRUE) -> Mass_plot
+  ggarrange(effect_pval_lat, y_lat, ncol = 2,  align = "hv", widths = c(1, 0.5), heights = c(1, 2),common.legend = TRUE) -> Lat_plot
+  }
+  outcomes_latnopass[[n]] =  Lat_plot
+  outcomes_massnopass[[n]] = Mass_plot
+  
+  n = n +1
+}
+
+ggarrange(outcomes_lat[[1]], outcomes_lat[[2]], outcomes_lat[[3]], ncol=1,labels=c("synonymous","nonsynonymous","ML branch"),common.legend=T) -> plot_lat
+ggarrange(outcomes_mass[[1]], outcomes_mass[[2]], outcomes_mass[[3]], ncol=1,common.legend = TRUE, legend="bottom",labels=c("synonymous","nonsynonymous","ML branch")) -> plot_mass
+
+ggarrange(outcomes_latpass[[1]], outcomes_latpass[[2]], outcomes_latpass[[3]], ncol=1,labels=c("synonymous","nonsynonymous","ML branch"),common.legend=T) ->plot_latpass
+ggarrange(outcomes_masspass[[1]], outcomes_masspass[[2]], outcomes_masspass[[3]], ncol=1,common.legend = TRUE, legend="bottom",labels=c("synonymous","nonsynonymous","ML branch")) -> plot_masspass
+
+ggarrange(outcomes_latnopass[[1]], outcomes_latnopass[[2]], outcomes_latnopass[[3]], ncol=1,labels=c("synonymous","nonsynonymous","ML branch"),common.legend=T) -> plot_nolat
+ggarrange(outcomes_massnopass[[1]], outcomes_massnopass[[2]], outcomes_massnopass[[3]], ncol=1,common.legend = TRUE, legend="bottom",labels=c("synonymous","nonsynonymous","ML branch")) -> plot_nomass
+
+ggsave(plot=plot_lat, filename="../Figures/Total_latitude.pdf")
+ggsave(plot=plot_mass, filename="../Figures/Total_mass.pdf")
+ggsave(plot=plot_latpass, filename="../Figures/Passeriformes_latitude.pdf")
+ggsave(plot=plot_masspass, filename="../Figures/Passeriformes_mass.pdf")
+ggsave(plot=plot_nolat, filename="../Figures/NoPasseriformes_latitude.pdf")
+ggsave(plot=plot_nomass, filename="../Figures/NoPasseriformes_mass.pdf")
 
 
-###############################################################
+
+
+plot_mass
+plot_latpass
+plot_masspass
+plot_nolat
+plot_nomass
+
+##########################################
+##########################################
+
+
+
+##Check No passeriformes with similar mass range than passeriformes
+Data_root %>% filter(Protein == "TOTAL" & Order=="Passeriformes") %>% dplyr::select(Latin_name, unsexed_mass) %>% arrange(unsexed_mass) -> Passeriformes_mass
+Passeriformes_mass %>% ggplot(aes(x=log(unsexed_mass))) + geom_histogram() + theme_bw()+ geom_vline(xintercept = 4.5, linetype="dotted", color = "red", size=1.5)
+Passeriformes_mass %>% filter(log(unsexed_mass) < 4.5) %>% summarise(n())
+ecdf(Passeriformes_mass$unsexed_mass)(147) #93 quantile
+
+Data_root %>% filter(!Order == "Passeriformes") %>% filter(log(unsexed_mass) < 4.5) -> small_nopass
+Perform_analisys(small_nopass,"../Figures/Rates/small_nopass_root","MTC")
+
+
+
 ##Differences in IQTREE substitution models with complex models
 iqtree_root %>% mutate(IQTREE_v = "Regular") -> iqtree_root
 iqtree_root3 %>% mutate(IQTREE_v = "No_third") -> iqtree_root3
@@ -430,8 +563,8 @@ RESULTS_hy %>% ggplot(aes(x=Latitude_Estimation,y=-log(Latitude_pvalue))) + geom
   geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1) + facet_wrap(~Model, scales = "free")  -> effect_pval_lat
 
 
-#############################################
-###########################################
+
+
 
 
 ##Passeriformes show a lower effect on mass because have a distribution of smaller values than the rest
@@ -439,18 +572,32 @@ iqtree_tips %>% filter(! Order == "Passeriformes") %>% arrange(unsexed_mass) %>%
 iqtree_tips %>% filter(Order == "Passeriformes") %>% arrange(unsexed_mass) %>% distinct(ID_organism,unsexed_mass) %>% mutate(Pass=T)  -> pass
 
 R = rbind(no_pass,pass)
-R %>% ggplot() + geom_histogram(aes(x=log(unsexed_mass),fill=Pass)) + theme_bw()       
+R %>% ggplot() + geom_density(aes(x=log(unsexed_mass),col=Pass))+  
+  geom_vline(xintercept = 4.5, linetype="dotted", color = "red", size=1.5)+ theme_bw()       
 
 
 
 
 
-#################################################
 
 
 
 
-
+remove_sd = function(DATA){
+  output = vector()
+  for (item in DATA){
+    v = strsplit(item,"[\\\\]|[^[:print:]]")[[1]][[1]] #REMOVE COMA by POINT
+    if (str_count(v,"\\.") == 2){ v = strsplit(v,"\\.")[[1]][[1]] }
+    v = as.numeric(gsub(",",".",v))
+    output = c(output,v)}
+  return(output)
+}
+conversion = function(x){
+  #Jules = x *5/1000* 4186 * 1/36000
+  #watts = Jules/20.1
+  watts = x *1/3600*5/1000*4186
+  return(watts)
+}
 
 
 ### The correlation of Rates and Mitochondrial copy number or BMR
@@ -474,43 +621,29 @@ data %>% filter(Coverage_ncl>=0.9 & max_sixe > 10000) -> data_soft
 #######################
 data_soft %>% arrange(ID) %>% filter(ID %in% Data_tips$ID_organism) -> data_soft
 
-##PGLS
-ALL_ID = read_csv("../Analysis_Mtc_number/info/NAME-ID.txt")
-t2 <- read.tree("../Analysis_Mtc_number/info/B10K.new")
+
 #Compare MTC number estimation against all mitochondrial proteins
 for (Protein_n in unique(Data_root$Protein)){
   Data = filter(Data_root, Protein == Protein_n)
+
   Add_data = filter(data_soft, ID %in% Data$ID_organism)
   Data %>% arrange(ID_organism) %>% filter(ID_organism %in% data_soft$ID)%>% mutate(Mitochondrial_number=Add_data$`Ratio of Median Depth`) -> Data
   
-  Data %>%  dplyr::select(Mitochondrial_number, ML_branch,ID) %>% as.data.frame() -> mm
+  Data %>%  dplyr::select(Mitochondrial_number, ML_branch,ID,unsexed_mass) %>% as.data.frame() -> mm
   comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
   #MAKE LOG SO RESIDUALS ARE NORMAL
-  Model_p = pgls(log(Mitochondrial_number) ~ log(ML_branch), comp, lambda="ML")
-  p_p = summary(Model_p)$coefficients[8]
-  p_v = summary(Model_p)$coefficients[2]
-  p_r = summary(Model_p)$r.squared
+  #Model_p = pgls(log(Mitochondrial_number) ~ log(ML_branch), comp, lambda="ML")
+  #Model_p = pgls(log(ML_branch) ~ log(Mitochondrial_number) + log(unsexed_mass), comp, lambda="ML")
+  Model_p = pgls( log(Mitochondrial_number) ~ log(ML_branch) + log(unsexed_mass), comp, lambda="ML")
+  p_p = summary(Model_p)$coefficients[11]#[8]
+  #p_p = summary(Model_p)$coefficients[8]
   figure = ggplot(data=Data,aes(x=log(ML_branch), y=log(Mitochondrial_number))) + geom_point() + theme_bw() + geom_smooth(method='lm', formula= y~x)
-  print(c(Protein_n,p_p,p_v, p_r))
-  plot(figure)
+  #print(c(Protein_n,p_p,summary(Model_p)$coefficients[12]))
+  print(c(Protein_n,p_p))
+  #plot(figure)
   }
 
-for (Protein_n in unique(Data_root$Protein)){
-  Data = filter(Data_root, Protein == Protein_n)
-  Add_data = filter(data_soft, ID %in% Data$ID_organism)
-  Data %>% arrange(ID_organism) %>% filter(ID_organism %in% data_soft$ID)%>% mutate(Mitochondrial_number=Add_data$`Ratio of Median Depth`) -> Data
-  
-  Data %>%  dplyr::select(Mitochondrial_number, ML_branch,ID) %>% as.data.frame() -> mm
-  comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
-  #MAKE LOG SO RESIDUALS ARE NORMAL
-  Model_p = pgls(log(ML_branch) ~ log(Mitochondrial_number) , comp, lambda=0.01)
-  p_p = summary(Model_p)$coefficients[8]
-  p_v = summary(Model_p)$coefficients[2]
-  p_r = summary(Model_p)$r.squared
-  figure = ggplot(data=Data,aes(y=log(ML_branch), x=log(Mitochondrial_number))) + geom_point() + theme_bw() + geom_smooth(method='lm', formula= y~x)
-  print(c(Protein_n,p_p,p_v, p_r))
-  plot(figure)
-}
+
 
 
 
@@ -551,46 +684,141 @@ data_BMR[-c(14,27),] -> data_BMR
 data_BMR %>% ggplot(aes(x=log(`Mass(g)`),y=log(`BMR(watts)`))) + geom_point()
 
 
-
+pvalues_vector = vector()
+#for (Protein_n in unique(Data_back_root$Protein)){
 for (Protein_n in unique(Data_root$Protein)){
   Data = filter(Data_root, Protein == Protein_n)
+  #Data = filter(Data_back_root, Protein == Protein_n)
   Data %>% arrange(Latin_name) %>% filter( gsub("_"," ",Latin_name) %in% data_BMR$Species) -> rc
 
   data_BMR %>% filter(Species %in%  gsub("_"," ",rc$Latin_name)) -> data_BMR2 
   Data %>% arrange(Latin_name)  %>% filter( gsub("_"," ",Latin_name) %in% data_BMR2$Species) %>% mutate(BMR=data_BMR2$`BMR(watts)`, Mass=data_BMR2$`Mass(g)`) -> root_check
   
-  regular_model = lm(log(ML_branch) ~ log(BMR/Mass), root_check)
-  p_r = summary(regular_model)$coefficients[8]
+  #regular_model = lm(log(ML_branch) ~ log(BMR/Mass), root_check)
+  #p_r = summary(regular_model)$coefficients[8]
   
-  root_check %>%  dplyr::select(BMR,ID, ML_branch,Mass) %>% as.data.frame() -> mm
+  root_check %>%  dplyr::select(BMR,ID, ML_branch,Mass,  unsexed_mass, syn, nosyn, ML_branch, Latitude) %>% as.data.frame() -> mm
   comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
-  #MAKE LOG SO RESIDUALS ARE NORMAL
-  Model_p = pgls(log(ML_branch) ~ log(BMR/Mass), comp, lambda="ML")
-  p_p = summary(Model_p)$coefficients[8]
-  figure = ggplot(data=root_check,aes(x=log(ML_branch), y=log(BMR/Mass))) + geom_point() + theme_bw() + geom_smooth(method='lm', formula= y~x)
-  print(c(Protein_n,p_p,p_r))
-  plot(figure)
+
+  
+  ##Model Rate ~ BMR
+  Model_p = pgls(log(nosyn) ~ log(BMR/Mass) + log(Mass), comp, lambda=1)#"ML")
+  p_p = summary(Model_p)$coefficients[11]#[8]
+  #figure = ggplot(data=root_check,aes(x=log(ML_branch), y=log(BMR/Mass))) + geom_point() + theme_bw() + geom_smooth(method='lm', formula= y~x)
+  print(c(Protein_n,p_p,summary(Model_p)$coefficients[12]))
+  #pvalues_vector = c(pvalues_vector, p_p)
+  ####Model Rate ~ Mass
+  Model_mass = pgls(log(syn) ~ log(unsexed_mass), comp, lambda="ML")
+  print(c(Protein_n,summary(Model_mass)$coefficients[8]))
 }
+t = tibble(p = pvalues_vector, f=p.adjust(p,"fdr"))
 
 
-for (Protein_n in unique(Data_root$Protein)){
-  Data = filter(Data_root, Protein == Protein_n)
-  Data %>% arrange(Latin_name) %>% filter( gsub("_"," ",Latin_name) %in% data_BMR$Species) -> rc
+
+
+#enrichment test comparing results between mitochondria and nuclear FDR < 0.05 samples
+
+#synonymous 
+m = matrix(c(8,14,69,98),2)
+fisher.test(m)
+#nonsynnonymous
+m = matrix(c(10,14,63,98),2)
+fisher.test(m)
+#ML
+m = matrix(c(7,14,45,98),2)
+fisher.test(m)
+
+
+
+
+###Correlations of BMR
+Data = filter(Data_root, Protein == "TOTAL")
+Data %>% arrange(Latin_name) %>% filter( gsub("_"," ",Latin_name) %in% data_BMR$Species) -> rc
+
+data_BMR %>% filter(Species %in%  gsub("_"," ",rc$Latin_name)) -> data_BMR2 
+Data %>% arrange(Latin_name)  %>% filter( gsub("_"," ",Latin_name) %in% data_BMR2$Species) %>% mutate(BMR=data_BMR2$`BMR(watts)`, Mass=data_BMR2$`Mass(g)`) -> root_check
+
+root_check %>%  dplyr::select(BMR,ID, ML_branch,Mass,  unsexed_mass,Latitude,Temperature) %>% as.data.frame() -> mm
+comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
+
+summary(pgls(log(BMR/Mass) ~ log(Mass), comp, lambda="ML"))
+summary(pgls(log(BMR/Mass) ~ log(Mass) + log(abs(Latitude)), comp, lambda="ML"))
+
+summary(pgls(log(BMR/Mass) ~ log(Mass) + I(Temperature^-1), comp, lambda="ML"))
+
+
+
+###################################################################CHECK EFFECT OF TEMPERATURE USING GILOOLLY MODEL
+
+
+
+
+Perform_analisysT = function(data,outcome,Set){
+  ##PGLS
+  ALL_ID = read_csv("../Analysis_Mtc_number/info/NAME-ID.txt")
+  t2 <- read.tree("../Analysis_Mtc_number/info/B10K.new")
   
-  data_BMR %>% filter(Species %in%  gsub("_"," ",rc$Latin_name)) -> data_BMR2 
-  Data %>% arrange(Latin_name)  %>% filter( gsub("_"," ",Latin_name) %in% data_BMR2$Species) %>% mutate(BMR=data_BMR2$`BMR(watts)`, Mass=data_BMR2$`Mass(g)`) -> root_check
+  RESULTS = tibble("Lambda" = numeric(), "Temperature_Estimation" = numeric(), "Mass_Estimation"= numeric(),"Temperature_pvalue" = numeric(),"Mass_pvalue"=numeric(), "Model" =character(), "Protein"  = character())
+  RESULTS = as.data.frame(RESULTS)
+  ####Multiple regression PGLS
+  for (Protein_n in unique(data$Protein)){
+    Data = filter(data, Protein == Protein_n)
+    Data %>%  dplyr::select(ID, syn, nosyn,Latitude,unsexed_mass,ML_branch,Temperature) %>% as.data.frame() -> mm
+    comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
+    Model_syn = pgls(syn ~ I((Temperature+273.15)^-1) + log(unsexed_mass), comp, lambda=1)
+    Model_nosyn = pgls(nosyn ~ I((Temperature+273.15)^-1) + log(unsexed_mass), comp, lambda=1)
+    Model_branch = pgls(ML_branch ~ I((Temperature+273.15)^-1) + log(unsexed_mass), comp, lambda=1)
+    n =0
+    L <- vector("list",3)
+    L[[1]] = Model_syn
+    L[[2]] = Model_nosyn
+    L[[3]] = Model_branch
+    for (model_n in 1:length(L)){
+      
+      model = L[[model_n]]
+      lambda = model$param[[2]]
+      Temperature_est = summary(model)$coefficients[2]
+      mass_est = summary(model)$coefficients[3]
+      Temperature_pval =  summary(model)$coefficients[11]
+      Mass_pval =  summary(model)$coefficients[12]
+      n = n +1
+      if (n == 1){
+        Model = "Synonymous"
+      }else if (n ==2){
+        Model = "NonSynonymous"
+      }else{
+        Model = "ML_branch"
+      }
+      Line = data.frame(lambda,Temperature_est,mass_est,Temperature_pval,Mass_pval,Model,Protein_n)
+      names(Line) = c("Lambda","Temperature_Estimation","Mass_Estimation", "Temperature_pvalue", "Mass_pvalue", "Model", "Protein")
+      RESULTS = rbind(RESULTS,Line)  
+    }
+    
+  }
   
-  regular_model = lm(log(ML_branch) ~ log(BMR/Mass), root_check)
-  p_r = summary(regular_model)$coefficients[8]
+  RESULTS_hy = as_tibble(RESULTS)
+  col_wes = brewer.pal(12, "Paired")
+  col_wes = c(col_wes,"#000000","#C0C0C0")
   
-  root_check %>%  dplyr::select(BMR,ID, ML_branch,Mass) %>% as.data.frame() -> mm
-  comp <- comparative.data(force.ultrametric(t2, method=c("nnls","extend")), mm, ID, vcv=TRUE, vcv.dim=3)
-  #MAKE LOG SO RESIDUALS ARE NORMAL
-  Model_p = pgls(log(BMR/Mass) ~ log(ML_branch), comp, lambda="ML")
-  p_p = summary(Model_p)$coefficients[8]
-  figure = ggplot(data=root_check,aes(y=log(ML_branch), x=log(BMR/Mass))) + geom_point() + theme_bw() + geom_smooth(method='lm', formula= y~x)
-  print(c(Protein_n,p_p,p_r))
-  plot(figure)
+  L_corrected = p.adjust(RESULTS_hy$Temperature_pvalue,method="fdr")
+  M_corrected = p.adjust(RESULTS_hy$Mass_pvalue,method="fdr")
+  RESULTS_hy %>% mutate(FDR_temp= L_corrected ,FDR_mass= M_corrected) -> RESULTS_hy
+  
+
+  RESULTS_hy %>% ggplot(aes(x=Mass_Estimation,y=-log(Mass_pvalue))) + geom_point(aes(col=FDR_mass < 0.05),size=3) + 
+    theme_bw() + geom_hline(yintercept= -log(0.05), linetype="dashed",  color = "black", size=1) + 
+    geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1) + facet_wrap(~Model, scales = "free") -> effect_pval_mass
+  RESULTS_hy %>% ggplot(aes(x=Temperature_Estimation,y=-log(Temperature_pvalue))) + geom_point(aes(col=FDR_temp < 0.05),size=3) + 
+    theme_bw() + geom_hline(yintercept= -log(0.05), linetype="dashed",  color = "black", size=1) + 
+    geom_vline(xintercept= 0, linetype="dashed",  color = "black", size=1) + facet_wrap(~Model, scales = "free")  -> effect_pval_lat
+  
+
+  print(effect_pval_mass)
+  print(effect_pval_lat) 
+
+  
+  return(RESULTS_hy)
 }
+
 
 
