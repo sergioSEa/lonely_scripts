@@ -129,7 +129,8 @@ Tree3 = read.tree("Total_tree2.tree")
 dataset_notused = read_tsv("discarted.tsv")
 
 dataset %>% filter(! X1 %in% dataset_notused$X1) -> dataset
-
+dataset %>% filter(X1 %in% Tree3$tip.label) -> dataset
+keep.tip(Tree3, dataset$X1) -> Tree3
 
 #####################Ancestral estate reconstruction
 library(castor)
@@ -228,7 +229,6 @@ p3 %<+% test + geom_nodelab(aes(image=phylopic),alpha=1, geom="phylopic", color=
 
 p4 + labs(colour = "Status Position 174") -> p4
 
-ggsave("Tree.pdf",p4)
 ggsave("Tree_paper.pdf",p4)
 ggsave("Tree_paper.png",p4)
 ###############################################################
@@ -238,15 +238,15 @@ p = ggtree(Tree3, layout="rectangular",branch.length="none")
 p %<+% dataset  + theme(legend.position="bottom") + #xlim(NA, 50) + 
   geom_tippoint(aes(x=x+1,color=factor(X2)),na.rm=TRUE) -> p2
 
-p2 + geom_cladelabel(3+leaf_size, "Testudines", offset=5, barsize=2, angle=0, offset.text=5, hjust=0.5, fontsize=3) + 
-  geom_cladelabel(874+ leaf_size, "Serpentis", offset=3, barsize=2, angle=0, offset.text=6, hjust=0.5, fontsize=3) +
-  geom_cladelabel(870+ leaf_size, "Squamata", offset=5, barsize=2, angle=0, offset.text=5, hjust=0.5, fontsize=3) +
-  geom_cladelabel(861+ leaf_size, "Crocodylia", offset=5, barsize=2, angle=0, offset.text=5, hjust=0.5, fontsize=3) +
-  geom_cladelabel(87+ leaf_size, "Aves", offset=5, barsize=2, angle=0, offset.text=5, hjust=0.5, fontsize=3) +
-  geom_cladelabel(97+ leaf_size, "Passeriformes", offset=3, barsize=2, angle=0, offset.text=6, hjust=0.5, fontsize=3)  ->p3
+p2 + geom_cladelabel(Turtle+leaf_size, "Testudines", offset=5, barsize=2, angle=0, offset.text=5, hjust=0.5, fontsize=3) + 
+  geom_cladelabel(Serpentis+ leaf_size, "Serpentis", offset=3, barsize=2, angle=0, offset.text=6, hjust=0.5, fontsize=3) +
+  geom_cladelabel(Bifurcata+ leaf_size, "Squamata", offset=5, barsize=2, angle=0, offset.text=5, hjust=0.5, fontsize=3) +
+  geom_cladelabel(Crocodyla+ leaf_size, "Crocodylia", offset=5, barsize=2, angle=0, offset.text=5, hjust=0.5, fontsize=3) +
+  geom_cladelabel(Aves+ leaf_size, "Aves", offset=5, barsize=2, angle=0, offset.text=5, hjust=0.5, fontsize=3) +
+  geom_cladelabel(Passeriformes+ leaf_size, "Passeriformes", offset=3, barsize=2, angle=0, offset.text=6, hjust=0.5, fontsize=3)  ->p3
 pies = nodepie(data_piechart, cols=1:5)
 ggtree::inset(p3, pies,width=1, height=1) 
-ggsave("Tree_pie.pdf",p4)
+#ggsave("Tree_pie.pdf",p4)
 ##########################################################
 
 
@@ -314,6 +314,52 @@ Data_birds %>% filter(!X1 %in% Data_Passeriformes$X1) -> Data_nopass
 list_subsets = list(Data_testudines, Data_birds, Data_nopass, Data_Passeriformes)
 vector_nodes = c(Turtle, NA, NA, NA)
 
+
+
+find_transitions = function(Parent_node, STATES=c("-", "A","T","C","G")){
+  Desc = sort(c(Descendants(Tree3, Parent_node, type = "all"),Parent_node))
+  LLH = Likelihoods[Desc,]
+  as_tibble(LLH) %>% mutate(N=Desc) -> LLH
+  for (n in Desc){
+        Node = Ancestors(Tree3,n)
+        if (length(Node) == 0){ next}
+        Node = Node[1]
+        Prob = filter(LLH,N==n)
+        Prob_ancest = filter(LLH,N==Node)
+        if (dim(Prob_ancest)[1] == 0){ next}
+        P1 =0
+        P2 =0
+        for (m in seq(1:5)){
+          P1_a = Prob[m]
+          P2_a = Prob_ancest[m]
+          if (P1_a > P1){
+            P1 = P1_a
+            state = STATES[m]
+          }
+          if (P2_a > P2){
+            P2 = P2_a
+            state_a = STATES[m]
+          }
+        }
+        if (P1 < 0.6){ next }
+        if (P2 < 0.6){ next }
+        if(! state_a == state ){
+          if(n > length(Tree3$tip.label)){
+            Name = Tree3$node.label[n-length(Tree3$tip.label)]
+          }else{ Name = Tree3$tip.label[n]}
+          print(paste(c("Transition",state_a, "to", state, "in node",n, "named", Name),collapse=" "))
+        }
+        
+      }
+  
+}
+
+
+
+
+
+
+
 library(phangorn)
 for (i in seq(1,length(list_subsets))){
   Subset = list_subsets[[i]]
@@ -351,8 +397,8 @@ for (i in seq(1,length(list_subsets))){
     data_piechart = cbind(LL_nodes, seq(dim(Subset)[1]+1,dim(Subset)[1]+Tr$Nnode))
   }
   
-  
-  colnames(data_piechart) = c("-", "A","T","C","G", "node")
+  STATES = c("-", "A","T","C","G")
+  colnames(data_piechart) =c(STATES, "node")
   data_piechart = as_tibble(data_piechart)
   
   p = ggtree(Tr, layout="rectangular",branch.length="none") 
@@ -363,13 +409,28 @@ for (i in seq(1,length(list_subsets))){
   ggtree::inset(p2, pies,width=1, height=1) -> p3
   ggsave(plot = p3,filename = "Supplmentary_Turtles.pdf")
   ggsave(plot = p3, filename="Supplmentary_Turtles.png")
+  
+  find_transitions(Parent_node = vector_nodes[i]+leaf_size)
 }
-
 
 
 
 ##Bird orders
 orders_info = read_tsv("All_bird_orders.tsv", col_names=F)
+orders_info %>% mutate(X3 = ifelse(X1 %in% Data_Passeriformes$X1, "Passeriformes",X3)) -> orders_info
+orders_info %>% mutate(X3 = ifelse(grepl("Anthropoides",X1), "Gruiformes", X3)) -> orders_info
+
+big_extinct = c("Anomalopteryx_didiformis","Dinornis_giganteus","Emeus_crassus")
+Rhea = c("Pterocnemia_pennata")
+
+orders_info %>% mutate(X3 = ifelse(X1 %in% big_extinct, "Dinornithiformes", X3)) -> orders_info
+orders_info %>% mutate(X3 = ifelse(X1 %in% Rhea, "Rheiformes", X3)) -> orders_info
+orders_info %>% mutate(X3 = ifelse(X1 == "Nannopterum_brasilianus", "Suliformes", X3)) -> orders_info 
+orders_info %>% mutate(X3 = ifelse(X1 == "Megalaima_virens", "Piciformes", X3)) -> orders_info 
+orders_info %>% mutate(X3 = ifelse(X1 == "Eurynorhynchus_pygmeus", "Charadriiformes", X3)) -> orders_info 
+orders_info %>% mutate(X3 = ifelse(X1 == "Dupetor_flavicollis", "Pelecaniformes", X3)) -> orders_info 
+
+
 orders_info %>% arrange(X1) %>% filter(X1 %in% Data_birds$X1) -> orders_info
 Data_birds %>% mutate(Family = orders_info$X2, Order= orders_info$X3) -> Data_birds
 
@@ -383,8 +444,11 @@ ggsave(plot = Freq_insertion_by_order, filename = "Birds_Insertion_Order.pdf")
 ggsave(plot = Freq_insertion_by_order, filename = "Birds_Insertion_Order.png")
 #Kernel "gaussian", "rectangular", "triangular", "epanechnikov", "biweight", "cosine" or "optcosine"
 
-
-
+Palaeognathae = c("Casiariiformes","Rheiformes","Tinamiformes","Strurhioniformes","Apterygiformes")
+Order_insertion %>% filter(Order %in% Palaeognathae) -> Pale
+Frq_gap2= sum(Pale$`-`)/sum(Pale$Total)
+Pale2 = tibble(Order="Palaeognathae","-"=NA,"c"=NA,"g"=NA,"t"=NA,Total=sum(Pale$Total),Frq_gap=sum(Pale$`-`))
+bind_rows(Order_insertion,Pale2)-> Order_insertion
 
 Jarvis = read.tree("/Users/Sergio/Documents/Paper/Research_Assitant/Chronogram01.TENT.ExAML.tre")
 INFO = read_delim("/Users/Sergio/Documents/Paper/Research_Assitant/Analysis_Mtc_number/info/Trait_data2.csv", delim = ";")
@@ -412,6 +476,9 @@ for (label in Jarvis$tip.label){
 Jarvis$tip.label = new_lab
 Jarvis$tip.label[Jarvis$tip.label=="Sphenisciformes24"] = "Apterygiformes"
 drop.tip(Jarvis, c("Caprimulgiformes14","Caprimulgiformes15","Passeriformes35","Passeriformes36","Passeriformes37","Passeriformes34")) -> p
+Jarvis$tip.label[Jarvis$tip.label=="Struthioniformes"] = "Palaeognathae"
+
+
 
 match(Order_insertion$Order, Jarvis$tip.label)
 Order_insertion %>% filter(Order %in% Jarvis$tip.label) -> Order_insertion

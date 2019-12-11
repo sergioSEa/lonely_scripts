@@ -1,3 +1,5 @@
+###Computes Shanon entropy per position from each lineage
+
 import numpy as np
 
 MSA = "Aligned_clean.fa"
@@ -75,7 +77,10 @@ for Animal in Dic_frequencies:
 						if str(i) != "nan":
 							codon_entropy += i
 							m += 1
-					codon_entropy = codon_entropy / m
+					try:
+						codon_entropy = codon_entropy / m
+					except:
+						codon_entropy = np.nan
 					
 				prev_entropy = []
 			else:

@@ -451,10 +451,17 @@ ggsave(plot=plot_masspass, filename="../Figures/Passeriformes_mass.pdf")
 ggsave(plot=plot_nolat, filename="../Figures/NoPasseriformes_latitude.pdf")
 ggsave(plot=plot_nomass, filename="../Figures/NoPasseriformes_mass.pdf")
 
+ggsave(plot=plot_lat, filename="../Figures/Total_latitude.png")
+ggsave(plot=plot_mass, filename="../Figures/Total_mass.png")
+ggsave(plot=plot_latpass, filename="../Figures/Passeriformes_latitude.png")
+ggsave(plot=plot_masspass, filename="../Figures/Passeriformes_mass.png")
+ggsave(plot=plot_nolat, filename="../Figures/NoPasseriformes_latitude.png")
+ggsave(plot=plot_nomass, filename="../Figures/NoPasseriformes_mass.png")
 
 
 
 plot_mass
+plot_lat
 plot_latpass
 plot_masspass
 plot_nolat

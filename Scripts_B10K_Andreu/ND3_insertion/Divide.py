@@ -26,7 +26,7 @@ with open(MSA) as File:
 				add_insertion = True
 				add_gap = False
 			else:
-				print(l,gaps,insertion)
+				print(l)
 				exit("Error")
 		if add_gap == True:
 			GAP += line			
