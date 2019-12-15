@@ -10,7 +10,9 @@ library(googlesheets)
 library(caper)
 library(ggimage)
 #ALL_ID = read_csv("../Research_Assitant/Analysis_Mtc_number/info/NAME-ID.txt")
-dataset = read_tsv("Position_nucleotide.tsv",col_names=F)
+#dataset = read_tsv("Position_nucleotide.tsv",col_names=F)
+dataset = read_tsv("Postion_nucleotide_reptiles.tsv",col_names=F)
+
 
 #Need information from which order are they from in order to differentiate Passeriformes from non-passeriformes
 #gs_title("Genomes for the family phylogeny") -> sheet
@@ -38,11 +40,27 @@ resolved_names = as.data.frame(resolved_names)
 #609 --> Leptocoma_aspasia ?? Leptocoma sericea
 #979 "Rhadina_sibilatrix" ?? Phylloscopus sibillatrix
 #1043 Strigops_habroptilus
-for (item in  1044:length(taxa)){
-  print(item)
-  Name = tnrs_match_names(taxa[item])
-  resolved_names = rbind(resolved_names, Name)
-  }
+
+#"Aepyornis_sp." - 40 
+#"Aepyornis_sp." - 338 
+#"Ceyx_azurea" - 563
+# "Cinclodes_sp."-686
+# "Dicaeum_dayakorum" - 978
+#982 Dicaeum_hypoleucum
+#983 Dicaeum_igniferum
+#1077 Elseya_sp. FALSE 
+#1109 emydura_sp
+#1226 --> to be done
+for (item in 978:length(taxa)){
+  tryCatch({
+    print(item)
+    Name = tnrs_match_names(taxa[item])
+    resolved_names = rbind(resolved_names, Name)
+  }, error=function(e){cat(paste(c("ERROR: ",item, taxa[item], collapse=F)) , "\n")})  
+  
+}
+write_csv()
+
 Name = tnrs_match_names(c("Edolisoma mindanense","Leptocoma sericea","Phylloscopus sibillatrix"))
 resolved_names = rbind(resolved_names, Name)
 
