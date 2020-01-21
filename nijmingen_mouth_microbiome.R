@@ -23,6 +23,9 @@ sample_metadata %>% mutate(ID_patient = StudieID, StudieID = paste0(sample_metad
 sample_metadata = rbind(metadata_P,metadata_S)
 
 
+
+###Functions
+
 ###Metrics Species (raw data with everything before repving anything)
 do_Metrics = function(MData,N){
   ID = MData[dim(MData)[2]] 
@@ -44,8 +47,81 @@ do_Metrics = function(MData,N){
   write_csv(x = Total_summary, path = N)
 }
 
+contamination_stats = function(File = "Reads_contaminated.txt.txt"){
+  Contaminated_metrics = read_delim(File, delim=" ")
+  Contaminated_metrics %>% mutate(Total= Human_reads+Paired_Reads, Cont_percentage=Human_reads/Total) -> Contaminated_metrics
+  Contaminated_metrics %>% ggplot() + geom_density(aes(x=Cont_percentage)) + theme_bw() -> contamination_distribution
+  ggplot(Contaminated_metrics,aes(x=Total, y=Cont_percentage)) + geom_point() + theme_bw() + geom_smooth(method='lm', formula= y~x) ->contamination_vs_reads
 
-###Functions
+  print(contamination_distribution)
+  print(contamination_vs_reads)
+  
+}
+
+distribution_taxonomy = function(taxa_matrix = matrix_taxonomy){
+  t_class = taxa_matrix %>% filter(grepl("t__",ID)) %>% mutate(Level="strain")
+  s_class = taxa_matrix %>% filter(grepl("s__",ID)) %>% filter(!grepl("t__",ID)) %>% mutate(Level="species")
+  g_class = taxa_matrix %>% filter(grepl("g__",ID) & !grepl("s__",ID)) %>% mutate(Level="genus")
+  f_class = taxa_matrix %>% filter(grepl("f__",ID) & !grepl("g__",ID)) %>% mutate(Level="family")
+  o_class = taxa_matrix %>% filter(grepl("o__",ID) & !grepl("f__",ID)) %>% mutate(Level="order")
+  c_class = taxa_matrix %>% filter(grepl("c__",ID) & !grepl("o__",ID)) %>% mutate(Level="clade")
+  p_class = taxa_matrix %>% filter(grepl("p__",ID) & !grepl("c__",ID)) %>% mutate(Level="phylum")
+  k_class = taxa_matrix %>% filter(grepl("k__",ID) & !grepl("p__",ID)) %>% mutate(Level="domain")
+  
+  print("Counting number the species identified per taxonomic level")
+  
+  raw_numbers = tibble(strain = dim(t_class)[1], species = dim(s_class)[1], 
+              genus = dim(g_class)[1], family = dim(g_class)[1], order = dim(o_class)[1],
+              clade = dim(c_class)[1], phylum = dim(p_class)[1], domain = dim(k_class)[1])
+  raw_numbers %>% gather(Taxonomic_level, Number, strain:domain, factor_key=TRUE) -> tax_numbers
+  ggplot(tax_numbers) + geom_bar(aes(x=Taxonomic_level,y=Number), stat="identity") + theme_bw() -> taxonomy_numbers
+  print(taxonomy_numbers)
+  
+  
+  print("Counting how many items are there per taxonomic level in each individual")
+  classified = tibble()
+  for (t_s in list(t_class,s_class,g_class,f_class,o_class,c_class,p_class,k_class)){
+    taxa = t_s$ID
+    transposed = as_tibble(t(select(t_s,-c(ID,Level))))
+    colnames(transposed) = taxa
+    transposed  %>% mutate_if(is.character, as.numeric) -> transposed
+    (! as.matrix(transposed) == 0)*1 -> transposed
+    
+    classified_i = tibble()
+    for (Indv in seq(1:dim(transposed)[1])){
+      presences = sum(as_vector(transposed[Indv,]))
+      presences = tibble(N=presences, Level=t_s$Level[1], ID =colnames(t_s)[Indv+1])
+      classified_i = rbind(classified_i,presences)
+    }
+    
+    classified = rbind(classified,classified_i)
+  }
+  
+  
+  classified %>% mutate(ID= str_replace(ID,"_feature_counts","")) %>% filter(!ID=="Pipelines") ->classified
+  
+  classified %>% arrange(desc(N)) -> ordered
+  classified %>% mutate(Level = factor(Level,levels= c("strain","species","genus","family","order","clade","phylum","domain"))) -> classified
+  classified %>% mutate(ID = factor(ID,levels= unique(ordered$ID))) -> classified
+  
+  classified %>% ggplot(aes(x=ID, y=N)) + geom_bar(stat="identity") + facet_wrap(~Level) + theme_bw() + theme(axis.text.x = element_text(angle = 90)) -> number_classified_by_ID
+  print(number_classified_by_ID)
+  
+  
+  print("Loading reads per sample, assesing whether the number of reads affect the taxons identified in each sample")
+  Reads = read_delim("Reads_contaminated.txt.txt"," ")
+  Reads %>% filter(!Sample== "Pipelines") -> Reads
+  Read_number = vector()
+  for (entry in arrange(Reads,Sample)$Paired_Reads){
+    for (i in c("strain","species","genus","family","order","clade","phylum","domain")){ 
+      Read_number = c(Read_number,entry)
+    }
+  }
+  arrange(classified,ID) %>% mutate(Reads= Read_number) -> Classified_reads
+  ggplot(Classified_reads, aes(x=N,y=Reads,col=ID)) + geom_point() + facet_wrap(~Level, scales="free") + theme_bw()  + theme(legend.position = "none") -> reads_vs_class
+  print(reads_vs_class)
+}
+
 Preprocess_f = function(Mtx,Summary_name){
 #Transpose matrix
 Sample = gsub("_feature_counts","",colnames(Mtx))
@@ -68,7 +144,7 @@ colnames(Mtx2) = Taxon
 do_Metrics(mutate(Mtx2, ID = Sample), N= Summary_name)
 ##Remove entries that are not seen in 90% of samples
 taxa2 = Mtx2[2:length(Mtx2)]
-taxa_filt=taxa2[,((colSums(taxa2 !=0) / nrow(taxa2)) *100 )>20]
+taxa_filt= taxa2 #taxa2[,((colSums(taxa2 !=0) / nrow(taxa2)) *100 )>20]
 
 mutate(taxa_filt, ID = Sample) -> taxa_filt
 taxa_filt[c(dim(taxa_filt)[2], seq(1:(dim(taxa_filt)[2]-1)))] -> taxa_filt
@@ -131,7 +207,7 @@ Diversity_analysis = function(taxa_matrix,metadata){
   #cbind(metadata,as_tibble(summary(D)$site.scores)) -> DCA_data
   #ggplot(data=DCA_data) + geom_point(aes(x=DCA1, y=DCA2, col=Source, shape=factor(Group))) + theme_bw()+
   #labs(x=paste(c("CA1(",as.character(round(D$evals[1],3)*100),"%)"), collapse=""), y=paste(c("CA2(",as.character(round(D$evals[2],3)*100),"%)"), collapse=""))
-  
+    
   print("Making Canonical Correspondence Analysis")
   ord <- cca(taxa_matrix[,2:dim(taxa_matrix)[2]] ~ Source + factor(Group), data=metadata)
   Info_ord = summary(ord)
@@ -141,6 +217,8 @@ Diversity_analysis = function(taxa_matrix,metadata){
     geom_label(label="Saliva",aes(x=CC1_saliva,y=CC2_saliva)) + geom_label(label="Gengivitis",aes(x=CC1_patient,y=CC2_patient)) + theme_bw() -> Fig_CC
   print(Fig_CC)
   
+  Reads = read_delim("Reads_contaminated.txt.txt",delim=" ")
+  metadata %>% mutate(n_reads = arrange(Reads,Sample)$Paired_Reads) -> metadata
   ###Alpha diversity statistical testing
   print("Using wilcoxon rank test on saliva difference on alpha diversity between patients and controls")
   alpha_diversities %>% filter(Source=="saliva") -> Saliva_diversity
@@ -161,8 +239,8 @@ Diversity_analysis = function(taxa_matrix,metadata){
   #######
   
   ###Beta diversity Statistical testing
-  
-  permanova_1 = adonis2(dist~ Source + factor(Group),data=metadata, permutations = 999,strata=Source, method="bray", strata="PLOT")
+  print("Doing Permanova test on Beta diversity")
+  permanova_1 = adonis2(dist~ Source + factor(Group) +n_reads,data=metadata, permutations = 999,strata=Source, method="bray", strata="PLOT")
   
   #Divide by tissue
   metadata %>% filter(Source=="pocket") -> meta_pocket
@@ -172,42 +250,137 @@ Diversity_analysis = function(taxa_matrix,metadata){
   saliva_dist <- vegdist(saliva_matrix[,2:dim(saliva_matrix)[2]],  method = "bray")
   pocket_dist <- vegdist(pocket_matrix[,2:dim(pocket_matrix)[2]],  method = "bray")
   
-  permanova_2_saliva = adonis2(saliva_dist~ factor(Group) ,data=meta_saliva, permutations = 999,strata=Source, method="bray", strata="PLOT")
-  permanova_2_pocket = adonis2(pocket_dist~ factor(Group) ,data=meta_pocket, permutations = 999,strata=Source, method="bray", strata="PLOT")
-  
+  permanova_2_saliva = adonis2(saliva_dist~ factor(Group)+n_reads ,data=meta_saliva, permutations = 999,strata=Source, method="bray", strata="PLOT")
+  permanova_2_pocket = adonis2(pocket_dist~ factor(Group)+n_reads ,data=meta_pocket, permutations = 999,strata=Source, method="bray", strata="PLOT")
+  print("Total permanova")
+  print(permanova_1)
+  print("In saliva permanova")
   print(permanova_2_saliva)
+  print("In pocket permanova")
   print(permanova_2_pocket)
   ###########
 }
 
+fit_linear_model = function(abundance_matrix,metadata, covariates){
+  result_bugg = tibble()
+  for (N in seq(1:dim(abundance_matrix)[2])){
+    dependent = as_vector(abundance_matrix[,N])
+    if (sum(dependent)==0){next
+    }else if (sum((!dependent==0)*1)/sum(dependent) < 0.2){ next }
+    
+    metadata %>% mutate(Dependent = dependent) -> regression_input
+    distribution_bug = ggplot(regression_input) + geom_density(aes(Dependent)) + theme_bw() + facet_wrap(~Source)
+    
+    if ("source" %in% covariates & length(covariates) == 1){ 
+      lm(Dependent ~ Source + factor(Group) + n_reads, data= regression_input ) -> regression_output
+      S = summary(regression_output)
+      fold_change = mean(filter(regression_input, Group == 1)$Dependent) /  mean(filter(regression_input, Group == 0)$Dependent)
+      pvalue = as_tibble(S$coefficients)$`Pr(>|t|)`[3]
+   }else if(length(covariates)==0){
+      lm(Dependent ~ factor(Group) + n_reads, data= regression_input ) -> regression_output
+      S = summary(regression_output)
+      fold_change = mean(filter(regression_input, Group == 1)$Dependent) /  mean(filter(regression_input, Group == 0)$Dependent)
+      pvalue = as_tibble(S$coefficients)$`Pr(>|t|)`[2]
+   }
+    
+    
+    
+    #qqnorm(S$residuals)
+    #qqline(S$residuals, col = "steelblue", lwd = 2)
+    
+    shapiro.test(S$residuals) -> normality
+    Normality_pval = normality$p.value
+    
+    f_t = as_tibble(t(c(colnames(abundance_matrix)[N], pvalue, fold_change, Normality_pval)))
+    colnames(f_t) = c("Taxa","P-value","Fold_change","Normality_pvalue")
+    result_bugg = rbind(result_bugg, f_t)
+  }
+  result_bugg %>% mutate(FDR=p.adjust(`P-value`,"fdr"), FDR_normality=p.adjust(Normality_pvalue,"fdr")) -> result_bugg
+  return(result_bugg)
+}
+
+non_parametric_testing = function(abundance_matrix,metadata){
+  result_bugg = tibble()
+  for (N in seq(1:dim(abundance_matrix)[2])){
+    dependent = as_vector(abundance_matrix[,N])
+    
+    if (sum(dependent)==0){next
+    }else if (sum((!dependent==0)*1)/sum(dependent) < 0.2){ next }
+    
+    metadata %>% mutate(Dependent = dependent) -> regression_input
+    lm(Dependent ~  n_reads, data= regression_input ) -> regression_output
+    Read_free_abundance = regression_output$residuals
+    
+    regression_input %>% mutate(Abundance2 = Read_free_abundance) -> regression_input
+    wilcox.test(filter(regression_input, Group == 1)$Abundance2, filter(regression_input, Group == 0)$Abundance2) -> non_param
+    
+    fold_change = mean(filter(regression_input, Group == 1)$Dependent)/mean(filter(regression_input, Group == 0)$Dependent)
+    bug = as_tibble(t(c(colnames(abundance_matrix)[N],non_param$p.value, fold_change)))
+    colnames(bug) = c("Taxa","P-value","Fold_change")
+    
+    result_bugg = rbind(result_bugg,bug)
+    
+  }
+  result_bugg %>% mutate(FDR= p.adjust(`P-value`,"fdr")) -> result_bugg
+  return(result_bugg)
+}
+
+
+gm_mean = function(x, na.rm=TRUE){ exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x)) }
+inverse_rank = function(x){ return(rank(-x)) }
+ratio_transform = function(Vector){
+  transformed_vector = log(Vector/gm_mean(Vector))
+  return(transformed_vector)
+}
 
 Differential_abundance = function(taxa_matrix,metadata, transformation = "Square"){
+  metadata %>% filter(StudieID %in% taxa_matrix$ID) %>% arrange(StudieID) -> metadata
+  Reads = read_delim("Reads_contaminated.txt.txt",delim=" ")
+  metadata %>% mutate(n_reads = arrange(Reads,Sample)$Paired_Reads) -> metadata
+  taxa_matrix %>% filter(ID %in% metadata$StudieID) %>% arrange(ID) -> taxa_matrix
   abundance_matrix = taxa_matrix[,2:dim(taxa_matrix)[2]]
+  
+  print("Filtering Columns absent in over 20% of samples")
+  abundance_matrix = abundance_matrix[,((colSums(abundance_matrix !=0) / nrow(abundance_matrix)) *100 )>20]
+  
   print("Transforming data")
   if (transformation == "Square"){
     abundance_matrix = sqrt(abundance_matrix)
   } else if(transformation == "argsinsquare"){
     abundance_matrix = asin(sqrt(abundance_matrix/100))
-  } else if(transformation == "None"){}
+  } else if(transformation == "None"){ print("No transformation applied")
+  } else if(transformation == "ratio"){ abundance_matrix = as_tibble(sapply(X = abundance_matrix, FUN = ratio_transform)) 
+  } else if(transformation == "inverse_rank"){ abundance_matrix = as_tibble(sapply(X = abundance_matrix, FUN = inverse_rank))
+  } else if(transformation == "log"){ abundance_matrix = log(abundance_matrix+1)}
   
   print("Iterating by taxa and fitting a linear model")
-  for (N in seq(1:dim(abundance_matrix)[2])){
-    dependent = as_vector(abundance_matrix[,N])
-    metadata %>% mutate(Dependent = dependent) -> regression_input
-    distribution_bug = ggplot(regression_input) + geom_density(aes(Dependent)) + theme_bw() + facet_wrap(~Source)
-    lm(Dependent ~ Source + factor(Group), data= regression_input ) -> regression_output
-    S = summary(regression_output)  
-    qqnorm(S$residuals)
-    qqline(S$residuals, col = "steelblue", lwd = 2)
-    shapiro.test(S$residuals) -> normality
-    Normality_pval = normality$p.value
-    
-    print(c(colnames(abundance_matrix)[N], Normality_pval))
-  }
+  Model_1 = fit_linear_model(abundance_matrix, metadata, "source")
   
+  #print(Model_1)
+  
+  ##Tissue-specific models
+  as_tibble(abundance_matrix) %>% mutate(ID=metadata$StudieID) -> temporal_matrix
+  metadata %>% filter(Source=="pocket") -> meta_pocket
+  metadata %>% filter(Source=="saliva") -> meta_saliva
+  temporal_matrix %>% filter(ID %in% meta_pocket$StudieID) %>% select(-ID) -> pocket_matrix
+  temporal_matrix %>% filter(ID %in% meta_saliva$StudieID) %>% select(-ID) -> saliva_matrix
+  
+  print("Iterating by taxa and fitting a linear model on pocket samples")
+  Model_2 = fit_linear_model(pocket_matrix, meta_pocket, vector())
+  Model_21 = non_parametric_testing(pocket_matrix, meta_pocket)
+  #print(Model_2)
+  print("Iterating by taxa and fitting a linear model on saliva samples")
+  Model_3 = fit_linear_model(saliva_matrix, meta_saliva, vector())
+  Model_31 = non_parametric_testing(saliva_matrix, meta_saliva)
+  #print(Model_3)
+  
+  print(c(dim(filter(Model_1,FDR_normality > 0.1))[1],dim(filter(Model_2,FDR_normality > 0.1))[1],dim(filter(Model_3,FDR_normality > 0.1))[1], dim(abundance_matrix)[2]))
+  
+  print(c(dim(filter(Model_21,FDR < 0.1)), dim(filter(Model_31,FDR<0.1))))
+  return(Model_3)
 }
 
-Study_factor_effects = function(taxa_matrix, metadata){
+do_bars = function(taxa_matrix, metadata){
   metadata %>% filter(StudieID %in% taxa_matrix$ID) %>% arrange(StudieID) -> metadata
   taxa_matrix %>% filter(ID %in% metadata$StudieID) %>% arrange(ID) -> taxa_matrix
   taxa_matrix = select(taxa_matrix, -ID)
@@ -218,20 +391,121 @@ Study_factor_effects = function(taxa_matrix, metadata){
   cbind(metadata,taxa_matrix) -> combined_matrix
   
   #tissue
+  print("Study taxa composition by tissue")
   combined_matrix %>% gather(Taxa, Abundance, (dim(metadata)[2]+1):dim(combined_matrix)[2], factor_key=TRUE) %>%
   ggplot() + geom_bar(aes(x=StudieID,y=Abundance, fill=Taxa), stat = "identity",position="stack") + facet_wrap(~Source, dir="v")+
    theme_bw() + theme(axis.text.x = element_text(angle = 90), legend.position = "bottom",legend.title = element_text(size = 3), legend.text = element_text(size = 6))+
-    theme(legend.key.size = unit(0.1, "cm"))#+
-#guides(fill = F )
+    theme(legend.key.size = unit(0.1, "cm"))
+ 
+  
+  combined_matrix %>% filter(Source=="saliva") %>% select(colnames(taxa_matrix)) %>% summarise_all(median) %>%
+    gather(Taxa, Median_relative_abundance, 1:length(colnames(taxa_matrix)), factor_key=TRUE) %>%
+  arrange(desc(Median_relative_abundance)) %>% head(n=5)
+   
+  combined_matrix %>% filter(Source=="pocket") %>% select(colnames(taxa_matrix)) %>% summarise_all(median) %>%
+    gather(Taxa, Median_relative_abundance, 1:length(colnames(taxa_matrix)), factor_key=TRUE) %>%
+    arrange(desc(Median_relative_abundance)) %>% head(n=5)
+  
   
 }
 
 
+
+### Exploratory analysis
+contamination_stats()
+distribution_taxonomy()
+
+Preprocess_f(family_matrix,"Summary_family.csv") -> family_matrix2
+do_bars(family_matrix2, sample_metadata)
+###
+
+
+### Statistical analysis: Clean, Diversity, indv taxa effect
+
 Preprocess_f(genus_matrix,"Summary_genus.csv") -> genus_matrix2
 Diversity_analysis(genus_matrix2,sample_metadata)
+Differential_abundance(genus_matrix2,sample_metadata,"Square")
 
 Preprocess_f(species_matrix,"Summary_species.csv") -> species_matrix2
 Diversity_analysis(species_matrix2,sample_metadata)
+Differential_abundance(species_matrix2,sample_metadata,"argsinsquare")
 
-Preprocess_f(family_matrix,"Summary_family.csv") -> family_matrix2
-Study_factor_effects(family_matrix2, sample_metadata)
+Diversity_analysis(family_matrix2,sample_metadata)
+Differential_abundance(family_matrix2,sample_metadata,"argsinsquare")
+
+#At the family level f__Propionibacteriaceae appears significant both with the linear model (residuals are normal) and in the wilcoxon test
+#Fold change = 2.4, meaning that that family appears two times more relative abundant
+
+
+
+
+#############################
+######PATHWAY ANALYSIS#######
+#############################
+
+differential_pathway_analysis = function(Pathway_abundance, metadata){
+  metadata %>% filter(StudieID %in% Pathway_abundance$ID) %>% arrange(StudieID) -> metadata
+  Pathway_abundance %>% filter(ID %in% metadata$StudieID) %>% arrange(ID) -> Pathway_abundance
+  
+  Reads = read_delim("Reads_contaminated.txt.txt",delim=" ")
+  metadata %>% mutate(n_reads = arrange(Reads,Sample)$Paired_Reads) -> metadata
+  
+  
+  Abundance_matrix = select(Pathway_abundance, -c(ID))
+  #Transformation
+  Abundance_matrix = log(Abundance_matrix+1)
+  
+  
+  Model_1 = fit_linear_model(abundance_matrix = Abundance_matrix, metadata = metadata, covariates = "source")
+  
+  ##Tissue-specific models
+  as_tibble(Abundance_matrix) %>% mutate(ID=metadata$StudieID) -> temporal_matrix
+  metadata %>% filter(Source=="pocket") -> meta_pocket
+  metadata %>% filter(Source=="saliva") -> meta_saliva
+  temporal_matrix %>% filter(ID %in% meta_pocket$StudieID) %>% select(-ID) -> pocket_matrix
+  temporal_matrix %>% filter(ID %in% meta_saliva$StudieID) %>% select(-ID) -> saliva_matrix
+  
+  print("Iterating by taxa and fitting a linear model on pocket samples")
+  Model_2 = fit_linear_model(pocket_matrix, meta_pocket, vector())
+  #print(Model_2)
+  print("Iterating by taxa and fitting a linear model on saliva samples")
+  Model_3 = fit_linear_model(saliva_matrix, meta_saliva, vector())
+
+  
+}
+make_relative = function(Column){
+  return(Column/sum(Column)*100)
+}
+
+
+pathway_abundance = read_tsv("Merged_batch_pathabundance.tsv")
+
+pathway_abundance %>% filter(! grepl("\\|",`# Pathway`) )-> pathway_abundance
+
+new_i = vector()
+for (i in colnames(pathway_abundance)){
+  if (i=="# Pathway"){ 
+    i = "Pathway"
+  }else{
+    i = str_replace(string = i,pattern = "_merged_Abundance",replacement = "")
+  }
+  new_i = c(new_i,i)
+}
+
+colnames(pathway_abundance) = new_i
+pathway_abundance %>% select(-Pipelines) -> pathway_abundance
+pathway_abundance %>% mutate_if(is_numeric,make_relative) -> pathway_abundance
+
+new_i = colnames(pathway_abundance)
+Pathway = pathway_abundance$Pathway
+pathway_abundance %>% select(-Pathway) %>% t() -> pathway_abundance2
+
+colnames(pathway_abundance2) = Pathway
+pathway_abundance2 %>% as_tibble() %>% mutate(ID = new_i[2:length(new_i)]) -> pathway_abundance2
+pathway_abundance2 %>% select(-c(UNMAPPED,UNINTEGRATED)) -> pathway_abundance2
+pathway_abundance2 %>% select(c("ID",colnames(select(pathway_abundance2,-ID)))) -> pathway_abundance2
+
+
+
+Diversity_analysis(pathway_abundance2,sample_metadata)
+differential_pathway_analysis(pathway_abundance2,sample_metadata)
