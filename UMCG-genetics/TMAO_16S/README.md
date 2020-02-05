@@ -11,6 +11,10 @@ Calling the script:
 
 Where each of the $number representes a path for each of the files described above.  
 
+####R requirements
+* Tidyverse (https://cran.r-project.org/web/packages/tidyverse/index.html)
+* Microbiome (https://bioconductor.org/packages/release/bioc/html/microbiome.html)
+
 
 ### Process  
 * All samples from the four files are matched based on the ID column (SampleID in the 16S count table).  
