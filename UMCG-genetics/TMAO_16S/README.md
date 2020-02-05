@@ -11,7 +11,7 @@ Calling the script:
 
 Where each of the $number representes a path for each of the files described above.  
 
-####R requirements
+#### R requirements
 * Tidyverse (https://cran.r-project.org/web/packages/tidyverse/index.html)
 * Microbiome (https://bioconductor.org/packages/release/bioc/html/microbiome.html)
 
