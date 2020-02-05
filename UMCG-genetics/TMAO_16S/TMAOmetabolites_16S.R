@@ -11,7 +11,7 @@ Linking_table = options[2] #Column 1: Cohort ID, Column2: Sequencing ID ; No hea
 Covariates = options[3] #Metadata should contain the following columns: ID, Sex, BMI, Age.
 Phenos = option[4] #Should contain a column called ID, the rest will be used as dependent variables in the model
 
-######Running at home
+######Running from desktop
 setwd("~/PhD/WORK/TMAO_16S")
 Count_table =  "LLD_rarefDefault.taxonomyTable.txt.gz"
 Linking_table = "coupling_pheno_16s.txt"
@@ -131,6 +131,8 @@ Count_table = Filter_unclassified(Count_table)
 Linking_table = Choose_replicate(Linking_table)
 taxonomic_levels = c("genus","order", "phylum","class","family")
 for (Level in taxonomic_levels){
+  print(paste0(c("Working in ",Level, "taxonomic level")))
+  
   Count_table$SampleID -> Sample_ID
   colnames(Count_table)[grepl(Level, colnames(Count_table))] -> Level_filter
   Count_table %>% select(Level_filter) %>% mutate(SampleID =  Sample_ID) -> Taxa_table
@@ -149,6 +151,8 @@ for (Level in taxonomic_levels){
   #Fit each of the models: Females, Males or All
   for (S in c(unique(Covariates$Gender), 3) ){
     if (is.na(S)){next}
+    print(paste0(c("Working in ",Gender, "Gender group")))
+    
     if (S == 3){ Covariates -> Cov_model
     } else{ Covariates %>% filter(Gender == S) -> Cov_model }
     Phenos %>% filter(ID %in% Cov_model$ID) -> Pheno_model
@@ -157,17 +161,26 @@ for (Level in taxonomic_levels){
     Transformation(Taxa_model) -> Taxa_model
     Taxa_model %>% select(-SampleID) -> Taxa_model
     
-    #Output_name = paste(c("16S",S), collapse= ".")
+    Output_name = paste(c("16S",Level,S, "tsv"), collapse= ".")
     
     Result_table = Fit_model(Taxa_model, Pheno_model, Cov_model)
 
     Result_table %>% arrange(Pvalue) -> Result_table
     Calculate_fdr(Taxa_model, Pheno_model, Cov_model, Result_table) -> FDR_vector
-    Result_table %>% mutate(FDR = FDR_vector)
+    Result_table %>% mutate(FDR = FDR_vector) -> Result_table
+    Result_table %>% arrange(FDR) -> Result_table
+    write_tsv(Result_table,path = Output_name)
     #p.adjust(Result_table$Pvalue ,"fdr")
   }
 
   
 }
 
-
+file.names <- dir(".", pattern ="16S.")
+Interesting = tibble()
+for(i in 1:length(file.names)){
+  file <- read_tsv(file.names[i])
+  file %>% mutate(Source=file.names[i]) %>% filter(FDR < 0.15) -> O
+  if (dim(O)[1] >= 1){ Interesting = rbind(Interesting,O)}
+}
+write_tsv(Interesting, "Lowest_FDR.tsv")
