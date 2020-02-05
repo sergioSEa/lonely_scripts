@@ -1,7 +1,7 @@
 ---
-title: "Oral_microbiome"
-author: "Sergio Andreu-S'{a}nchez"
-date: "28 de enero de 2020"
+title: "Oral microbiome in Periodontitis"
+author: "Sergio Andreu-Sanchez"
+date: "29th January 2020"
 output: html_document
 ---
 
@@ -11,10 +11,11 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Analysis of Oral Microbiome
 
-In this Rmarkdown document the different steps on the microbiome analysis on Nijmegen oral microbiome project will be presented. The input samples consists on a metadata matrix, a matrix of microbiome relative abundance produced by Metaphlan, a matrix of pathway abundances produced by humann2 and a file with statistics on human contamination and number of reads.
+In this Markdown document the different steps on the microbiome analysis on Nijmegen oral microbiome project will be presented. The input samples consists on a metadata matrix, a matrix of microbiome relative abundance produced by Metaphlan2, a matrix of pathway abundances produced by humann2 and a file with statistics on human contamination and number of reads (based on kneadata output).
 
 Let us begin by loading the packages needed and setting up the work location where the files are located.
-I use tidyverse mainly to use function from dplyr, ggplot and readr, for easy data handling. Vegan and ape are phylogenetic and ecological packages that are widely used in microbiome analysis. Ggforce extends some functions in ggplot. Ggtree is a ggplot-based tree visualizing tool. Cluster allows to cluster the data.
+I use tidyverse mainly to use function from dplyr, ggplot and readr, for easy data handling. Vegan and ape are phylogenetic and ecological packages that are widely used in microbiome analysis. Ggforce extends some functions in ggplot. Ggtree is a ggplot-based tree visualizing tool. Cluster allows to cluster the data. DT allows for interactive tables to be displayed.
+
 
 ```{r Prepare libraries}
 setwd("~/PhD/WORK/Nijmegen/")
@@ -25,11 +26,12 @@ suppressWarnings(suppressMessages(library(ape)))
 suppressWarnings(suppressMessages(library(ggforce)))
 suppressWarnings(suppressMessages(library(ggtree)))
 suppressWarnings(suppressMessages(library(cluster)))
+suppressWarnings(suppressMessages(library(DT)))
 ```
 
 ## Loading data
 
-Next I will load the data using readr functions. The taxonomy matrix contains information on different taxonomic levle encoded as a letter followed by two underscroes. It also contains a second header that I will remove.
+Next I will load the data using readr functions. The taxonomy matrix contains information on different taxonomic levels encoded as a letter followed by two underscroes. It also contains a second header that I will remove.
 The metadata is per patient. As a single patient may have both saliva and pocket tissue, I duplicate the metadata information for both pocket samples, with a P ID and saliva samples, with a S ID.
 Finally, pathways file contain both information on individual bacteria and total pathway information, i.e there is the amount of pathway X in bacteria y,z and w and the overall abundance of pathway X. We are just interested in the later, thus we will remove all information on bacteria (after a | character)
 
@@ -62,8 +64,10 @@ First, I have two functions that are descriptive on the data.
 "do_Metrics" generates a summary on Path N of a given matrix. It counts for each feature (taxa) the number of 0 we observe and some statistics about them. 
 ```{r Create metrics on 0s in each taxa, message=F}
 do_Metrics = function(MData,N){
+  #Get column where the ID is, the last column, and remove it
   ID = MData[dim(MData)[2]] 
   MData %>% dplyr::select(-one_of(c("ID"))) -> MData
+  #Function taht counts the number of 0s in a specific Taxa (V)
   number_0 = function(V){
     N_0 = 0
     for (i in V){
@@ -73,6 +77,7 @@ do_Metrics = function(MData,N){
   }
   
   Total_summary = tibble()
+  #Iterate though taxa and get SUMMARY stats, minimum abundance, maximum, median, standard deviation and number of 0
   for (C in seq(1:dim(MData)[2])){
   MData[,C] %>% mutate_if(is.character, as.numeric) %>% summarise_all(list(min, max,median,mean,sd,number_0)) %>% mutate(Name = colnames(MData[,C])) -> SUMMARY
   colnames(SUMMARY) = c("Minimum_abundance", "Maximum_abundance", "Median_abundance", "Mean_abundance","Standard_deviation","Number_of_0_counts","Organism")
@@ -82,24 +87,31 @@ do_Metrics = function(MData,N){
 }
 
 ```
-"contamination_stats" creates some plots regarding contamination. It takes the metadata information and the contamination statistics. It checks on: Contamination vs nReads, Tissue vs Contamination, and the distribution of contamination.
+"contamination_stats" creates some plots regarding human contamination. It takes the metadata information and the contamination statistics. It checks on: Contamination vs nReads, Tissue vs Contamination, and the distribution of contamination.
+Host contamination is a common problem on metagenomic experiments, since even though the sequencing input might be high, majority of reads might be comming from the host.
 
 
 ```{r Check contamination statistics, message=F}
 contamination_stats = function(File = "Reads_contaminated.txt.txt", metadata=sample_metadata){
+  #Read contamination stats and process
   Contaminated_metrics = read_delim(File, delim=" ")
   Contaminated_metrics %>% mutate(Total= Human_reads+Paired_Reads, Cont_percentage=Human_reads/Total) -> Contaminated_metrics
+  #Look at the distribution of contamination
   Contaminated_metrics %>% ggplot() + geom_density(aes(x=Cont_percentage)) + theme_bw() -> contamination_distribution
   ggplot(Contaminated_metrics,aes(x=Total, y=Cont_percentage)) + geom_point() + theme_bw() + geom_smooth(method='lm', formula= y~x) ->contamination_vs_reads
 
+  #Put contamination metrics with the rest of covaraites
   metadata %>% filter(StudieID %in% Contaminated_metrics$Sample) %>% arrange(StudieID) -> metadata
   Contaminated_metrics %>% filter(Sample %in% metadata$StudieID) %>% arrange(Sample) -> Contaminated_metrics
   Contaminated_metrics %>% mutate(Source = metadata$Source) -> Contaminated_metrics
+  #Check the effect of the source in the amount of human reads
   Contaminated_metrics %>%
-    ggplot(aes(x=Source, y=Cont_percentage)) + geom_boxplot()+ geom_sina()  + theme_bw()
-  
+    ggplot(aes(x=Source, y=Cont_percentage)) + geom_boxplot()+ geom_sina()  + theme_bw() -> plot_source_contamination
+  print("Doing statistical test on the % of contamination in Saliva vs Pocket")
   wilcox.test(filter(Contaminated_metrics, Source=="pocket")$Cont_percentage, filter(Contaminated_metrics, Source=="saliva")$Cont_percentage)
+  print("Distribution of proportion of Human reads")
   print(contamination_distribution)
+  print("Effect of the number of reads in the abundance of Human reads")
   print(contamination_vs_reads)
   
 }
@@ -174,10 +186,11 @@ distribution_taxonomy = function(taxa_matrix = matrix_taxonomy){
 }
 ```
 
-"do_bars", generates a bar plot comparing the taxonomic relative abundance betweeen the two tissues, and between patients and controls. It also prints the top 5 taxa in each case.
+"do_bars", generates a bar plot comparing the taxonomic relative abundance betweeen the two tissues, and between patients and controls. It also generates and outputs a median abundance per species in Controls, Cases, Pocket and Saliva.
 
 ```{r Create bar plots comparing Source and Group composition, message=F}
 do_bars = function(taxa_matrix, metadata){
+  #MAtch metadata and counts
   metadata %>% filter(StudieID %in% taxa_matrix$ID) %>% arrange(StudieID) -> metadata
   taxa_matrix %>% filter(ID %in% metadata$StudieID) %>% arrange(ID) -> taxa_matrix
   taxa_matrix = select(taxa_matrix, -ID)
@@ -190,42 +203,42 @@ do_bars = function(taxa_matrix, metadata){
   #tissue
   print("Study taxa composition by tissue")
   combined_matrix %>% gather(Taxa, Abundance, (dim(metadata)[2]+1):dim(combined_matrix)[2], factor_key=TRUE) %>%
-  ggplot() + geom_bar(aes(x=StudieID,y=Abundance, fill=Taxa), stat = "identity",position="stack") + facet_wrap(~Source, dir="v")+
+  ggplot() + geom_bar(aes(x=ID_patient,y=Abundance, fill=Taxa), stat = "identity",position="stack") + facet_wrap(~Source, dir="v")+
    theme_bw() + theme(axis.text.x = element_text(angle = 90), legend.position = "bottom",legend.title = element_text(size = 3), legend.text = element_text(size = 6))+
     theme(legend.key.size = unit(0.1, "cm")) -> BAR1
   print(BAR1)
  
   print("Study taxa composition in Patients vs Controls")
   combined_matrix %>% gather(Taxa, Abundance, (dim(metadata)[2]+1):dim(combined_matrix)[2], factor_key=TRUE) %>%
-    ggplot() + geom_bar(aes(x=StudieID,y=Abundance, fill=Taxa), stat = "identity",position="stack") + facet_wrap(~factor(Group), dir="v")+
+    ggplot() + geom_bar(aes(x=StudieID,y=Abundance, fill=Taxa), stat = "identity",position="stack") + facet_wrap(~factor(Group), dir="v",scales="free")+
     theme_bw() + theme(axis.text.x = element_text(angle = 90), legend.position = "bottom",legend.title = element_text(size = 3), legend.text = element_text(size = 6))+
     theme(legend.key.size = unit(0.1, "cm")) -> BAR2
   print(BAR2)
   
   
-  print("Top 5 taxons by tissue")
+  
   combined_matrix %>% filter(Source=="saliva") %>% select(colnames(taxa_matrix)) %>% summarise_all(median) %>%
     gather(Taxa, Median_relative_abundance, 1:length(colnames(taxa_matrix)), factor_key=TRUE) %>%
-  arrange(desc(Median_relative_abundance)) %>% head(n=5) -> top
+  arrange(desc(Median_relative_abundance)) -> top
    
   combined_matrix %>% filter(Source=="pocket") %>% select(colnames(taxa_matrix)) %>% summarise_all(median) %>%
     gather(Taxa, Median_relative_abundance, 1:length(colnames(taxa_matrix)), factor_key=TRUE) %>%
-    arrange(desc(Median_relative_abundance)) %>% head(n=5) -> top2
+    arrange(desc(Median_relative_abundance)) -> top2
   
-  print("Top 5 taxons by condition")
+  
   
   combined_matrix %>% filter(as.character(Group)=="0") %>% select(colnames(taxa_matrix)) %>% summarise_all(median) %>%
     gather(Taxa, Median_relative_abundance, 1:length(colnames(taxa_matrix)), factor_key=TRUE) %>%
-    arrange(desc(Median_relative_abundance)) %>% head(n=5) -> top3
+    arrange(desc(Median_relative_abundance)) -> top3
   
   combined_matrix %>% filter(as.character(Group)=="1") %>% select(colnames(taxa_matrix)) %>% summarise_all(median) %>%
     gather(Taxa, Median_relative_abundance, 1:length(colnames(taxa_matrix)), factor_key=TRUE) %>%
-    arrange(desc(Median_relative_abundance)) %>% head(n=5) -> top4
+    arrange(desc(Median_relative_abundance))  -> top4
   
-  top %>% mutate(Top="Saliva") -> top
-  top2 %>% mutate(Top="Pocket") -> top2
-  top3 %>% mutate(Top="Healthy") -> top3
-  top4 %>% mutate(Top="Patient") -> top4
+  top %>% mutate(Sample_group="Saliva") -> top
+  top2 %>% mutate(Sample_group="Pocket") -> top2
+  top3 %>% mutate(Sample_group="Healthy") -> top3
+  top4 %>% mutate(Sample_group="Patient") -> top4
   TOP = rbind(top,top2,top3,top4)
   return(TOP)
   
@@ -239,10 +252,12 @@ First, we need to change a bit the taxa matrix. It has each bacteria as a row an
 
 ```{r Preprocess taxa, message=F}
 Preprocess_f = function(Mtx,Summary_name){
-#Transpose matrix
+
+#Remove "_feature_counts" from the Sample name and the column ID (first column)
 Sample = gsub("_feature_counts","",colnames(Mtx))
 Sample = Sample[2:length(Sample)]
 
+#Remove higher orders from the Order name (a Species has info about Genera, Family... Separeated by | and we only one the last one)
 Taxon = vector()
 list_split = strsplit(Mtx$ID, "\\|")
 for (i in seq(1:length(list_split))){
@@ -250,18 +265,22 @@ for (i in seq(1:length(list_split))){
   Taxon = c(Taxon, element[length(element)])
 }
 
-Mtx[-1,] -> Mtx2
+#Transposition. Remove First row, which are the Taxon names
 Mtx2 = as_tibble(t(Mtx)[-1,])
+#Make Abundacnes as numeric
 Mtx2%>% mutate_if(is.character, as.numeric) -> Mtx2
-
+#Now we can add the taxon name that we produced by taking the last field after |
 colnames(Mtx2) = Taxon
 
+# We count 0s, and other abundance stats and save the file in Summary
 do_Metrics(mutate(Mtx2, ID = Sample), N= Summary_name)
 
-taxa2 = Mtx2[2:length(Mtx2)]
-taxa_filt= taxa2 
+#taxa2 = Mtx2[2:length(Mtx2)]
+taxa_filt= Mtx2
 
+#Add ID again
 mutate(taxa_filt, ID = Sample) -> taxa_filt
+#Move ID to fist position
 taxa_filt[c(dim(taxa_filt)[2], seq(1:(dim(taxa_filt)[2]-1)))] -> taxa_filt
 
 return(taxa_filt)
@@ -270,6 +289,8 @@ return(taxa_filt)
 ```
 
 Next, we want to check Alpha-diversity (within samples microbial composition) differences and Beta-diversity (differences between samples) differences.
+
+For that, we need to match metadata and abundance data. Then, we explore the data similarity by means of a hierarchical clustering on the abundance matrix. Alpha diversity is calculated (as Shanon entrophy) and compared between Pocket samples (Cases and Controls) and Saliva samples (Cases and Controls) separately by means of a Wilcoxon rank test (non-parametric). Beta diversity (Brais-Curtis distance) is decomposed as a PCoA and then we use a MANOVA test to look for differences between Cases and Controls in three different models. One including both sample sources, and the other two in pocket and saliva respectively. We control for the influence of the number of reads in each sample.
 
 ```{r Diversity, message=F}
 Diversity_analysis = function(taxa_matrix,metadata){
@@ -313,7 +334,9 @@ Diversity_analysis = function(taxa_matrix,metadata){
     theme_bw() + labs(x=paste(c("PCoA1(",as.character(round(PCoA$values[1,2],3)*100),"%)"), collapse=""), y=paste(c("PCoA2(",as.character(round(PCoA$values[2,2],3)*100),"%)"), collapse="")) -> Fig_PCoA1
   ggplot(data= ordination_data) + geom_point(aes(x = PCoA2, y=PCoA3, col=Source, shape=factor(Group))) +
     theme_bw() + labs(x=paste(c("PCoA2(",as.character(round(PCoA$values[2,2],3)*100),"%)"), collapse=""), y=paste(c("PCoA3(",as.character(round(PCoA$values[3,2],3)*100),"%)"), collapse="")) -> Fig_PCoA2
+  print("First two Components of the PCoA")
   print(Fig_PCoA1)
+  print("Components 2 and 3 of the PCoA")
   print(Fig_PCoA2)
   
  ##Getting contamination stats 
@@ -364,7 +387,9 @@ Diversity_analysis = function(taxa_matrix,metadata){
 ```
 
 
-Finally, we will look at individual taxa differences
+Finally, we will look at individual taxa differences. 
+We transform the data by means of the arg sin square transformation. This tries to make the abundances of a particular bugg to be normally distributed. Then, we remove all the bugs that are not present in at least 20% of the samples (we don't want to test for samples with really small power). Then we fit three different models. One with all data, other with Pocket and other with Saliva. In the two later cases I record the p-values of the Group (Cases, Controls) and the p-values of a test for normally, since the linear model assumes that the distribution of residuals is normally distributed. For the first case (where both pocket and saliva are together) I recorded the p-value of the Source (Saliva/Pocket) and controlled for Group and number of reads.
+P-values for normality and effect where corrected with FDR.
 
 ```{r Differential abundance}
 Differential_abundance = function(taxa_matrix,metadata, transformation = "argsinsquare"){
@@ -382,7 +407,7 @@ Differential_abundance = function(taxa_matrix,metadata, transformation = "argsin
   if(transformation == "argsinsquare"){ abundance_matrix = asin(sqrt(abundance_matrix/100)) } 
   
   print("Iterating by taxa and fitting a linear model")
-  Model_1 = fit_linear_model(abundance_matrix, metadata, "source")
+  Model_1 = fit_linear_model(abundance_matrix, metadata, "source", "Source")
 
   
   as_tibble(abundance_matrix) %>% mutate(ID=metadata$StudieID) -> temporal_matrix
@@ -398,10 +423,15 @@ Differential_abundance = function(taxa_matrix,metadata, transformation = "argsin
 
   print(c(dim(filter(Model_1,FDR < 0.1)), dim(filter(Model_2,FDR < 0.1)), dim(filter(Model_3,FDR<0.1))))
   
+  return(list(Model_1,Model_2,Model_3))
+  
 }
 
 ```
-And to individual pathway differences
+
+
+We do the same process but with the different Pathway abundances
+
 ```{r Differential pathway abundance}
 differential_pathway_analysis = function(Pathway_abundance, metadata){
   metadata %>% filter(StudieID %in% Pathway_abundance$ID) %>% arrange(StudieID) -> metadata
@@ -434,7 +464,8 @@ differential_pathway_analysis = function(Pathway_abundance, metadata){
   as_tibble(Model_1)%>% group_by(FDR<0.01, FDR_normality>0.01) %>% summarise(n()) -> C0
   
   
-  return(rbind(mutate(C0, TEST="all"), mutate(C, TEST="pocket"), mutate(C2, TEST="saliva")))
+  return(list(Model_1, Model_2, Model_3))
+    
   
 }
 
@@ -444,9 +475,13 @@ differential_pathway_analysis = function(Pathway_abundance, metadata){
 
 
 ### Helper functions
+
+This are functions called in some of the functions described above.
+
 Iterate and fit linear model
+
 ```{r Fit linear model to Taxa/Pathway}
-fit_linear_model = function(abundance_matrix,metadata, covariates){
+fit_linear_model = function(abundance_matrix,metadata, covariates,   Report="Group"){
   result_bugg = tibble()
   for (N in seq(1:dim(abundance_matrix)[2])){
     dependent = as_vector(abundance_matrix[,N])
@@ -460,7 +495,8 @@ fit_linear_model = function(abundance_matrix,metadata, covariates){
       lm(Dependent ~ Source + factor(Group) + n_reads, data= regression_input ) -> regression_output
       S = summary(regression_output)
       fold_change = mean(filter(regression_input, Group == 1)$Dependent) /  mean(filter(regression_input, Group == 0)$Dependent)
-      pvalue = as_tibble(S$coefficients)$`Pr(>|t|)`[3]
+      if (Report == "Group"){ pvalue = as_tibble(S$coefficients)$`Pr(>|t|)`[3] }
+      else if (Report == "Source"){pvalue = as_tibble(S$coefficients)$`Pr(>|t|)`[2] }
    }else if(length(covariates)==0){
       lm(Dependent ~ factor(Group) + n_reads, data= regression_input ) -> regression_output
       S = summary(regression_output)
@@ -482,7 +518,7 @@ fit_linear_model = function(abundance_matrix,metadata, covariates){
 ```
 
 
-Make absolute abundance realtive
+Make absolute abundance to relative
 
 
 ```{r Relative abundance of pathway}
@@ -492,7 +528,7 @@ make_relative = function(Column){ return(Column/sum(Column)*100) }
 
 
 ## Data Analysis
-One the functions are ready, we can start the analysis.
+Once the functions are ready, we can start the analysis.
 
 Let's start with some exploratory analysis.
 
@@ -503,6 +539,9 @@ contamination_stats()
 
 
 
+As you can see, the distribution of contamination has a median around 20% of contamination and the more reads that were found the higher the contamination is. What makes sense, we have more reads because there was more human material to start with.
+
+
 And check the taxonomy distribution
 
 
@@ -511,20 +550,27 @@ distribution_taxonomy()
 ```
 
 
-For comparing as bars the composition, we go to the family level or above, since there are many Genuses or Species
+This shows some effect on the number of reads.
+
+
+
+For comparing the composition, we go to the family level or above, since there are many Genuses or Species
 
 
 ```{r Taxon composition, echo=F}
 Preprocess_f(family_matrix,"Summary_family.csv") -> family_matrix2
 do_bars(family_matrix2, sample_metadata) -> List_tops
 ```
-Which are the top families seen in each condition?
+
+We show the family compositon when comparing two different tissues and when comparing the two groups. But this is hard to visualize, because there are several. Thus it is easier to check it as a table
+
+
 ```{r Top composition}
-List_tops
+DT::datatable(List_tops)
 ```
 
 
-We can also look for the top Species
+We can also look for the median Species (instead of Families) at each condition
 
 
 
@@ -537,11 +583,12 @@ do_bars(species_matrix2, sample_metadata) -> List_tops
 
 ```
 ```{r Top composition species}
-List_tops
+DT::datatable(List_tops)
 ```
 
+You might check that table for specific Taxas in each of the groups of interest (Saliva/pocket/Cases/Controls)
 
-As we might be interested on looking at the top species only on pocket, we can write some code without the function.
+As we might be interested on looking at the top species only on pocket, we can write some code since the function doesn't do this.
 
 
 
@@ -560,19 +607,23 @@ Combine_metadata(sample_metadata=sample_metadata, taxa_matrix=species_matrix2) -
 taxa_matrix = select(species_matrix2,-ID)
 combined_matrix %>% filter(Source=="pocket" && as.character(Group)=="0") %>% select(colnames(taxa_matrix)) %>% summarise_all(median) %>%
     gather(Taxa, Median_relative_abundance, 1:length(colnames(taxa_matrix)), factor_key=TRUE) %>%
-  arrange(desc(Median_relative_abundance)) %>% head(n=5) %>% mutate(TOP="Healthy") -> top
+  arrange(desc(Median_relative_abundance))  %>% mutate(TOP="Healthy") -> top
 combined_matrix %>% filter(Source=="pocket")%>% filter(Group==1) %>% select(colnames(taxa_matrix)) %>% summarise_all(median) %>%
     gather(Taxa, Median_relative_abundance, 1:length(colnames(taxa_matrix)), factor_key=TRUE) %>%
-  arrange(desc(Median_relative_abundance)) %>% head(n=5) %>% mutate(TOP="Patients") -> top2
+  arrange(desc(Median_relative_abundance)) %>%  mutate(TOP="Patients") -> top2
   
 TOP = rbind(top,top2)
-print(TOP)
+DT::datatable(TOP)
 ```
-And family prevalence on pocket
+
+
+
+And the same goes for family composition on pocket samples only
+
 ```{r bars in pocket, echo=F}
 combined_matrix = Combine_metadata(sample_metadata, family_matrix2)
 combined_matrix %>% filter(Source=="pocket") %>% gather(Taxa, Abundance, (dim(sample_metadata)[2]+1):dim(combined_matrix)[2], factor_key=TRUE) %>%
-  ggplot() + geom_bar(aes(x=StudieID,y=Abundance, fill=Taxa), stat = "identity",position="stack") + facet_wrap(~Group, dir="v")+
+  ggplot() + geom_bar(aes(x=StudieID,y=Abundance, fill=Taxa), stat = "identity",position="stack") + facet_wrap(~Group, dir="v", scales="free")+
    theme_bw() + theme(axis.text.x = element_text(angle = 90), legend.position = "bottom",legend.title = element_text(size = 3), legend.text = element_text(size = 6))+
     theme(legend.key.size = unit(0.1, "cm")) -> BAR1
 print(BAR1)
@@ -585,23 +636,85 @@ Let's check the alpha and beta diversity in the Species and Family level, and wh
 Diversity_analysis(species_matrix2,sample_metadata)
 
 ```
+
+
+On the species level, the paired Wilcoxon test did not yield significant differences between Cases and Controls in Pocket, Saliva or combined samples. Meaning that there is no statistical assurance of differences in Micobial diversity in both Groups.
+Nevertheless, when we look at the clustering of the samples, both the PCoA and the hierarchical cluster seem to point to some clustering based on the Group (Cases/Controls) on the Pocket samples. The saliva samples seem more similar among them (PCoA plot). This is statistically confirmed in the MANOVA test. MANOVA allow us to test the effect of a dependent variable and covariates in all the bugs at the same time and is a powerful test.
+
+Let's check what are the trends observed in Families
+
+
 ```{r Diversity Family}
 Diversity_analysis(family_matrix2,sample_metadata)
 
 ```
 
 
-And then, look at differences on individual taxas in Species and Families.
+Similar findings can be seen here as the ones described for Species.
+
+
+### Differential Abundance 
+
+Differences on individual taxas in Species and Families can be interrogated when comparing Cases and Controls. We have two major issues here. Fist is that the bugg abundance distribution is not normal and has a great amount of 0s. Linear modelling assumes that the residuals of the model are normally distributed,this is normally associated with the distribution of the dependent variable. In the results I give both the p-value of the Beta of interest (Source or Group depending on the test) and a p-value of the distribution of the residuals being normal. This means that in an ideal scenario we would like the p-value of the Beta being significantly low while the p-value of the normality not being significantly low. The second problem, is that the amount of test is high, and only highly significant p-values will remain significant after correcting for multiple testing. Therefore, we try to make fewer tests by removing bugs where there is not a prevalence on at least 20% of the samples.
+
+Three models are performed, one for the bugg in pocket, other for the bugg in saliva and finally a combination of slaiva and pocket, in which case I interrogate if we see differences between the sample source (And not the Group).
+
+
 
 ```{r Individual differential Species abundance, echo = F}
-Differential_abundance(species_matrix2,sample_metadata,"argsinsquare")
+Differential_abundance(species_matrix2,sample_metadata,"argsinsquare") -> Results
 
 ```
+
+
+Species differential abundance between Saliva and Pocket
+```{r  Differential Species abundance Saliva and Pocket}
+Results[[1]] %>% arrange(FDR) %>% DT::datatable()
+```
+
+Species differential abundance between Cases and Controls in Pocket
+
+```{r  Differential Species abundance Cases and Controls Pocket}
+Results[[2]] %>% arrange(FDR) %>% DT::datatable()
+```
+
+Species differential abundance between Cases and Controls in Saliva
+
+```{r  Differential Species abundance Cases and Controls Saliva}
+Results[[3]] %>% arrange(FDR) %>% DT::datatable()
+```
+
+
+No significant hits were found between Cases and Controls. In the combined set, there are significant heats, meaning that the bugg has a significant abundance in Saliva and Pocket. Nevertheless the nromality P-values are really low, meaning that the distribution of residuals is hardly normal. This breaks the assumption of the lineal model and the results might not be accurate.
+
+Studying the same on the family level
+
 
 ```{r Individual differential Family abundance, echo = F}
-Differential_abundance(family_matrix2,sample_metadata,"argsinsquare")
+Differential_abundance(family_matrix2,sample_metadata,"argsinsquare") -> Results
 ```
 
+Family differential abundance between Saliva and Pocket
+```{r  Differential Family abundance Saliva and Pocket}
+Results[[1]] %>% arrange(FDR) %>% DT::datatable()
+```
+
+Family differential abundance between Cases and Controls in Pocket
+
+```{r  Differential Family abundance Cases and Controls Pocket}
+Results[[2]] %>% arrange(FDR) %>% DT::datatable()
+```
+
+Family differential abundance between Cases and Controls in Saliva
+
+```{r  Differential Family abundance Cases and Controls Saliva}
+Results[[3]] %>% arrange(FDR) %>% DT::datatable()
+```
+
+
+We find one signifcant hit on Saliva, where there is a significant difference in abundances bewteen Controls and Cases.
+
+### Most abundant taxas
 
 Next we want to check the most abundant taxas in pocket in Patients and Controls, and the greatest median abundance fold changes
 
@@ -628,17 +741,17 @@ Median_species %>% filter(Group==0) %>% arrange(desc(Median_abundance)) -> speci
 Median_species %>% filter(Group==1) %>% arrange(desc(Median_abundance)) -> species_patient
 ```
 
-Most abundant species in control samples
+Most abundant species in Control samples
 ```{r Most abundant in pocket2}
-print(species_control)
+DT::datatable(species_control)
 ```
-And in Patients
+And in Cases
 ```{r Most abundant in pocket3}
-species_patient
+DT::datatable(species_patient)
 ```
 Biggest fold changes
 ```{r Most abundant in pocket4}
-Fold_changes
+DT::datatable(Fold_changes)
 ```
 
 
@@ -658,6 +771,8 @@ wilcox.test(filter(aa_pocket, Group==1)$s__Aggregatibacter_actinomycetemcomitans
 
 ```
 
+
+### Pathway analysis
 
 Finally, we will check Pathway abundance changes between the two conditions.
 
@@ -693,6 +808,22 @@ Then we test for changes on pathway abundance
 ```{r Differential pathway abundance results, echo=F, warning=F}
 differential_pathway_analysis(pathway_abundance2,sample_metadata) -> pathway_results
 ```
-```{r Pathway abundance output}
-print(pathway_results)
+
+Differential Pathway abundance between both tissue source
+
+```{r Pathway abundance output1}
+DT::datatable(pathway_results[[1]])
 ```
+
+Differential Pathway abundance in Pocket between Controls and Cases
+
+```{r Pathway abundance output2}
+DT::datatable(pathway_results[[2]])
+```
+
+Differential Pathway abundance in Saliva between Controls and Cases
+
+```{r Pathway abundance output3}
+DT::datatable(pathway_results[[3]])
+```
+
