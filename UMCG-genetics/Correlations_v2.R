@@ -12,10 +12,13 @@ library(tidyverse) #Data handling
 library(microbiome) #cdr transformation source("Microbiome_function.R")
 library(reshape2)
 library(patchwork)
+library(pheatmap)
 #Statistical learning
 library(randomForest)
 library(glmnet)
 library(caret)
+library(qdapTools)
+
 
 ###################
 ###Load Functions##
@@ -48,6 +51,7 @@ Diet_regressors = read_tsv(file = "20150722_Diet__1135patients.txt")
 #Metabolome
 Lipids_aa = read_tsv("LLD_nmr_total.txt")
 untargeted_metabolome = read_tsv("data_1442samples_LLD_baseline_1183plasma_metabolites.txt")
+key_metabolome = read_tsv("key_lld_1183meta_annotation.txt")
 ####################################
 
 #1. Assess relations among Metabolites of interest.
@@ -60,9 +64,16 @@ Normalized_dependent_metabolites = apply(Dependent_metabolites[2:length(Dependen
 Normalized_dependent_metabolites %>% mutate(ID = Dependent_metabolites$ID) -> Normalized_dependent_metabolites
 Datasets = Match_dataset(Metabolites = Normalized_dependent_metabolites, Regressor = Normalized_dependent_metabolites, Covariates = Covariates )
 
-Association_metabolites(select(Normalized_dependent_metabolites,-ID), with_Covariates = F)
-Association_metabolites(select(Datasets[[1]],-ID), with_Covariates = T, Covariates = select(Datasets[[2]],-ID))
-Association_metabolites(select(Datasets[[1]],-ID), with_Covariates = "BMI", Covariates = select(Datasets[[2]],-ID))
+Association1 = Association_metabolites(select(Normalized_dependent_metabolites,-ID), with_Covariates = F)
+Association1 %>% mutate(Beta = as.numeric(Beta), Pvalue = as.numeric(Pvalue)) -> Association1
+Fig_association1 = Make_heatmap(Association1, "DependentvsDependent_heatmap")
+#Assocaition2 = Association_metabolites(select(Datasets[[1]],-ID), with_Covariates = T, Covariates = select(Datasets[[2]],-ID))
+Association3 = Association_metabolites(select(Datasets[[1]],-ID), with_Covariates = "BMI", Covariates = select(Datasets[[2]],-ID))
+Association3 %>% mutate(Beta = as.numeric(Beta), Pvalue = as.numeric(Pvalue)) -> Association3
+Fig_association3 = Make_heatmap(Association3, "DependentvsDependent_adjutsted_heatmap")
+
+#ggsave(filename = "Model_stats/DependentvsDependent_heatmap.pdf", Fig_association1, scale = 3)
+#ggsave(filename = "Model_stats/DependentvsDependent_adjutsted_heatmap.pdf", Fig_association3, scale = 3)
 
 ####Metabolite are strongly associated among them, with high betas (except TMAO, more complex relation with rest?)
 
@@ -91,10 +102,17 @@ for(Dependent in colnames(Dependents)){
 }
 
   ##Are these associations independent of Kidney function?
+
+Compute_GFR = function(x){
+  x %>% mutate(GFR= ifelse(Gender==1, ifelse(Creatinine<= 0.7,144*(Creatinine/0.7)-0.329 *(0.993)^Age, 144*(Creatinine/0.7)-1.209 * (0.993)^Age), NA)) -> x
+  x %>% mutate(GFR= ifelse(Gender==0, ifelse(Creatinine<=0.9,141*(Creatinine/0.9)-0.411 * (0.993)^Age, 141*(Creatinine/0.9)-1.209 * (0.993)^Age), GFR)) -> x
+  return(x)
+}
+
 Datasets = Match_dataset(Regressor = Clinical_Questionaries, Metabolites = Normalized_dependent_metabolites, Covariates )
 Datasets[[2]] %>% mutate(Creatinine = Datasets[[3]]$`Creatinine (umol/L)`) -> Covariates
-Covariates %>% mutate(GFR= ifelse(Gender==0, 186 * (Creatinine/88.4)^-1.154 * (Age)^-0.203, 186 * (Creatinine/88.4)^-1.154 * (Age)^-0.203*0.742)) -> Covariates #https://ukidney.com/nephrology-resources/egfr-calculator
-
+#Covariates %>% mutate(GFR= ifelse(Gender==0, 186 * (Creatinine/88.4)^-1.154 * (Age)^-0.203, 186 * (Creatinine/88.4)^-1.154 * (Age)^-0.203*0.742)) -> Covariates #https://ukidney.com/nephrology-resources/egfr-calculator
+Covariates = Compute_GFR(mutate(Covariates, Creatinine = Creatinine*0.0113))
 Dependents = select(Datasets[[1]],-ID)
 Regressors = select(Covariates,-ID)
 
@@ -119,12 +137,18 @@ for(Dependent in colnames(Dependents)){
 }
 
 #without GFR
-Cov_relation
+Cov_relation %>% mutate(Metabolite = Covariate ,Pvalue = as.numeric(Pvalue), Beta = as.numeric(Beta)) -> Cov_relation
+Fig_covariates = Make_heatmap(Cov_relation, "Covariates_heatmap")
+
 #With GFR
 Cov_independent_kidney %>% arrange(Regressor, Covariate) -> Cov_independent_kidney
+Cov_independent_kidney %>% mutate(Metabolite = Covariate ,Pvalue = as.numeric(Pvalue), Beta = as.numeric(Beta)) -> Cov_independent_kidney
+Fig_covariates_kideney = Make_heatmap(Cov_independent_kidney, "Covariates_kideney_heatmap")
+
 # We observe that in TMAO age is highly associated to higher levels, BMI is not significantly correlated, and GFR and gender are somewhat associated.
 #Interestingly Gender is really associated to all other metabolites in the same direction. The little effect on TMAO might be due to higher expression of FMO3 in women (correlate with RNAseq?)
 # BMI appear to not affect TMAO, Choline or y-butyrobetaine after corrections.Still associated with L-carnitine. ASsociated with all before adjustments.
+
 
 ### Are TMAO levels different between indifiduals with high Kidney functiona and low kidney fucntion?
 Covariates %>% ggplot() + geom_density(aes(GFR))
@@ -137,6 +161,9 @@ wilcox.test(filter(Dependent_metabolites, ID %in% First_quantile)$TMAO, filter(D
 
 Regr = Prepare_clinical(Clinical_Questionaries, Metabolites = Dependent_metabolites ,Covariates  = Covariates )
 Results_Phenotypes = Iterate_Metabolites(Regr[[1]],Regr[[2]],Regr[[3]], "Clinical_Questionaries",FDR_iter=100)
+
+Fig_phenos = Make_heatmap(Results_Phenotypes, "ClinicalPhenotypes_heatmap" )
+
 #TMAO: Associated with creatinine in serum (<0.05FDR), and with a FDR of 0.2 with excreted Creatinine in opposite direction (consistent)
 #Betaine: Many associations. CRP (inflmation marker) is NEGATIVELY correlated. It is also negatively correlated with triglycerides, blood preassure, trhombocytes, Creatinine and creatinine excretion, inactivity, hemoglobine or lymphocytes
 #This points to a role of Betaine in protection, which makes sense: Betaine works by preventing the build-up of an amino acid called homocysteine. This amino acid can harm blood vessels and contribute to heart disease, stroke, or circulation problems.
@@ -157,6 +184,11 @@ Results_Diet  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue)
 #Lcarnitine associated with coffee, alcohol and meat
 #y-butyro: no significant association (lowest is meat)
 
+Fig_Diet = Make_heatmap(Results_Diet, "Diet_heatmap")
+#ggsave(filename = "Model_stats/Diet_heatmap.pdf", Fig_Diet, scale = 3)
+
+
+
 #5. Association with microbes
 ##5.1 Species
 Input_MGS = Prepare_Metagenome_species(Species_abundance, Metabolites = Dependent_metabolites, Covariates = Covariates)
@@ -170,6 +202,8 @@ Results_MGS  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue),
 #butyrobetaine: best association FDR 0.09 with PRevotella_histicola
 
 #Does y-butyrobetaine (caiB) or Betaine (lcdH + something) (both produced by moo) come from enzymes from prevotella?
+Fig_species = Make_heatmap(Results_MGS, "Species_heatmap")
+#ggsave(filename = "Model_stats/Species_heatmap.pdf", Fig_species, scale = 3)
 
 
 ##5.2 Genus
@@ -184,12 +218,18 @@ Results_MGS2  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue)
 #L-carnitine: no associations
 #y-butyrobetaine: no associations
 
+Fig_genus = Make_heatmap(Results_MGS2, "Genus_heatmap")
+#ggsave(filename = "Model_stats/Genus_heatmap.pdf", Fig_genus, scale = 3)
+
+
 ##5.2 Family
 Input_MGS3 = Prepare_Metagenome_genus(Family_abundance, Metabolites = Dependent_metabolites, Covariates = Covariates)
 Results_MGS3 = Iterate_Metabolites(Input_MGS3[[1]],Input_MGS3[[2]],Input_MGS3[[3]], "MGS_family")
 Results_MGS3  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue), col = FDR<0.15)) +
   facet_wrap(~Metabolite, scales="free") + theme_bw() +theme(axis.text.x = element_text(angle = 90, hjust = 1)) -> Fig_MGS_genus
 
+Make_heatmap(Results_MGS3, "Family_heatmap") -> Heatmap_family
+#ggsave(filename = "Model_stats/Family_heatmap.pdf", Heatmap_family, scale = 3)
 #TMAO: Best hit Prevotellaceaea (FDR:0.09), positive correaltion
 #Betaine: Best hit is clostridiales, but 0.13 FDR
 #Choline: No good hits (0.2 FDR)   No microbial origin
@@ -203,13 +243,26 @@ Input_pt = Prepare_Pathways(Gene_family_abundance, Metabolites = Dependent_metab
 Results_Pathway = Iterate_Metabolites(Input_pt[[1]], Input_pt[[2]], Input_pt[[3]], "MGS_pathway")
 Results_Pathway  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue), col = FDR<0.15)) +
   facet_wrap(~Metabolite, scales="free") + theme_bw() +theme(axis.text.x = element_text(angle = 90, hjust = 1)) -> Fig_MGS_pathways
+
+
+Fig_pathway = Make_heatmap(Results_Pathway, "Pathway_heatmap")
+#ggsave(filename = "Model_stats/Pathway_heatmap.pdf", Fig_pathway, scale = 3)
+
+
 ##6.2 Pathways
 ##6.3 Gene clusters
 
 #7 Gene abunance (shorbred)
 Gene_markers = read_tsv(file = "../TMAO_cutC/Total_table.tsv")
+Gene_markers %>% group_by(ID) %>% summarise(Count = sum(Count)) -> Gene_markers
 Input_shortbred = Prepare_cutC_shortbred(Gene_markers, Metabolites = Dependent_metabolites, Covariates = Covariates)
-Results_shortbred = Iterate_Metabolites(Input_shortbred[[1]], Input_shortbred[[2]], Input_shortbred[[3]], "MGS_shortbred")
+Results_shortbred = Iterate_Metabolites(Input_shortbred[[1]], Input_shortbred[[2]], Input_shortbred[[3]], "MGS_shortbred2",FDR_iter = 0)
+
+Results_shortbred %>% mutate(log10Pval = -log10(Pvalue)) %>% select(Metabolite, Regressor, log10Pval) %>% spread(Metabolite, log10Pval) %>% as.data.frame() %>% column_to_rownames(var = "Regressor") -> wide_results
+pheatmap(wide_results, "Shortbred_heatmap") -> Fig_shortbred
+#ggsave(filename = "Model_stats/Shortbred_heatmap.pdf", Fig_shortbred, scale = 3)
+
+
 
 #7. Genetics
 #....
@@ -220,15 +273,34 @@ Results_metabolome = Iterate_Metabolites(Input_metabolome[[1]], Input_metabolome
 Results_metabolome  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue), col = FDR<0.15)) +
   facet_wrap(~Metabolite, scales="free") + theme_bw() +theme(axis.text.x = element_text(angle = 90, hjust = 1))
 #Get names from variables somewhere...
-#TMAO: 18 associations
-#Betaine: 186 associations
-#Choline: 104 associations
-#L-Carnitine: 117 (first ones are aminoacids)
+#TMAO: 18 associations:  Top four are omega-3, 1 degree of insaturation, correlated to Intermediate denstiy (between low and very low) tryglycerides and negatively correlated to esters
+#low density cholesterol tryglycerides ;  positive correlation with creatinine ;  and to Acetoacetate, among others
+#Betaine: Role in cholesterol homeostasis/protection : Negative association with all fats except cholesterol in VLDL. Negative correlation with apoa1 (from HDL), also negative total phosphoglycerides 186 associations
+#Choline: Positive correlation with fats (with HDL) 104 associations
+#L-Carnitine: Negative correlation with HDL, positive correaltions with VLD, 117 (first ones are aminoacids)
 # y-butyrobetaine: 52 associations (fist ones amino-acids, creatinine, HDL)
 
+Fig_targeted_metabolites = Make_heatmap(Results_metabolome, "targeted_heatmap")
+#ggsave(filename = "Model_stats/targeted_heatmap.pdf", Fig_targeted_metabolites, scale = 3)
+
+
+
+##Need some expert in metabolism to check all this...
+
 ##Untargeted metabolite approach
+untargeted_metabolome
 Input_metabolome_un = Prepare_metabolome(untargeted_metabolome, Metabolites = Dependent_metabolites, Covariates=Covariates)
-Results_metabolome_un = Iterate_Metabolites(Input_metabolome_un[[1]], Input_metabolome_un[[2]], Input_metabolome_un[[3]], "Metabolome")
+Results_metabolome_un = Iterate_Metabolites(Input_metabolome_un[[1]], Input_metabolome_un[[2]], Input_metabolome_un[[3]], "Metabolome_untargetd")
+
+select(key_metabolome,c(meta, name)) -> Dic_key
+lookup(terms=Results_metabolome_un$Regressor, Dic_key$meta, Dic_key$name) -> metabolite_names
+Results_metabolome_un$Regressor = metabolite_names
+
+
+Fig_untargeted_metabolites = Make_heatmap(Results_metabolome_un, "untargeted_heatmap")
+#ggsave(filename = "Model_stats/untargeted_heatmap.pdf", Fig_untargeted_metabolites, scale = 3)
+
+##Need some expert in metabolism to check all this...
 
 
 #X Random Forest
@@ -291,6 +363,33 @@ FeatureSelection_RandomForest(Input_x = Input_spdi,Dependent_metabolites = Depen
 S1 = Prepare_metabolome(Lipids_aa, Metabolites = Dependent_metabolites, Covariates=Covariates)
 S1[[3]] %>% cbind(select(S1[[2]],-ID)) %>% as_tibble() %>% drop_na() -> Input_metabolome_rf
 FeatureSelection_RandomForest(Input_x = Input_metabolome_rf,Dependent_metabolites = Dependent_metabolites ,  Covariates= Covariates, Fold = 10)
+
+#X Lasso
+S1 = Prepare_Metagenome_species(Species_abundance, Metabolites = Dependent_metabolites, Covariates = Covariates)
+S2 = Prepare_diet(Diet_regressors, S1[[3]], Covariates)
+Species_diet = S2[[1]] %>% cbind(select(S2[[3]], -ID))
+Species_diet %>% cbind(select(S2[[2]],-ID)) %>% as_tibble() %>% drop_na() -> Input_spdi
+S1[[1]] %>% filter(ID %in% Input_spdi$ID) -> Dependent
+
+#Iterate for each metabolite
+
+for (Metabolite in colnames(select(Dependent, -ID))){
+  Dependent %>% select(Metabolite) %>% as_vector() -> Dep
+  Lasso_list = Fit_lasso(select(Input_spdi, -ID), Dep)
+  
+  Lasso_Model = Lasso_list[[1]]
+  Betas = Lasso_list[[2]]
+  Variance_explained = Lasso_list[[3]]
+  
+  Non_zero_betas = Betas[which(Betas != 0)]
+  Non_zero_betas_names = Betas@Dimnames[[1]][which(Betas != 0 ) ]
+  DF_beta = tibble(Feature = Non_zero_betas_names, Beta =  Non_zero_betas)
+  write_tsv(x = DF_beta, path = paste(c("Model_stats/Lasso_betas_", Metabolite, ".tsv"), collapse = ""))
+  print(paste(c(Variance_explained, Metabolite), collapse = " "))
+  Plot = plot(Lasso_Model)
+  print(Plot)
+}
+
 
 
 

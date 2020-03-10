@@ -253,6 +253,29 @@ Metabolome_transformation = function(x, samples_row=T, method="hfmin", missing_f
   }
   return(as.data.frame(x))
 }
+Make_heatmap = function(Results, Name){
+  Results %>% mutate(Beta=as.numeric(Beta)) -> Results
+  Results %>% mutate(log10Pval = -log10(Pvalue)) %>% select(Metabolite, Regressor, log10Pval) %>% spread(Metabolite, log10Pval) %>% as.data.frame() %>% column_to_rownames(var = "Regressor") -> wide_results
+  Results %>% select(Metabolite, Regressor, Beta) %>% spread(Metabolite, Beta) %>% as.data.frame() %>% column_to_rownames(var = "Regressor") -> wide_results2
+  
+  wide_results_Annotation = wide_results2
+  
+  wide_results_Annotation[wide_results_Annotation < "0"] <- "-"
+  wide_results_Annotation[wide_results_Annotation > "0"] <- "+"
+  
+  
+  # set colors
+  #breaksList = seq(0, +max(abs(wide_results)),by=2 * max(abs(wide_results))/55)
+  #cols <- colorRampPalette(c("Darkblue","White","Darkred"))(length(breaksList))
+  #cols[seq(length(cols)/2-1,length(cols)/2+1)] <- "White"
+
+  pheatmap(wide_results, display_numbers = wide_results_Annotation, fontsize_number = 7, fontsize_col = 7,fontsize_row = 5) -> Fig_0#,border_color = "#EEEEEE",na_col = "white",
+           #color = cols,treeheight_row = 0, treeheight_col = 0,legend_labels = "log(p-value)",
+           #breaks = breaksList ) -> Fig_0
+  ggsave(filename = paste(c("Model_stats/", Name, ".pdf"), collapse = ""), Fig_0, scale = 4)
+  
+  return(Fig_0)
+}
 ##############################
 #########ML functions#########
 ##############################
@@ -284,25 +307,26 @@ Fit_RandomForest = function(X,Y){
   
 }
 Fit_lasso = function(X,Y){
-  findCorrelation(cor(X,method = "spearman"), cutoff = 0.75) -> Variables_correlated
-  X[-Variables_correlated] -> X
+  #findCorrelation(cor(X,method = "spearman"), cutoff = 0.75) -> Variables_correlated
+  #X[-Variables_correlated] -> X
   
-  List_split = Split_Train_Test(X,Y)
-  Train = List_split[[1]]
-  Train_y = List_split[[3]]
-  Test = List_split[[2]]
-  Test_y = List_split[[4]]
-  
+  #List_split = Split_Train_Test(X,Y)
+  #Train = List_split[[1]]
+  #Train_y = List_split[[3]]
+  #Test = List_split[[2]]
+  #Test_y = List_split[[4]]
+  Train = X
   X = as.matrix(Train)
-  X_test = as.matrix(Test)
+  Train_y = Y
+  #X_test = as.matrix(Test)
   
   #Cross Validation 
   cvfit = cv.glmnet(X, Train_y, nfolds = 20,type.measure="mse",standardize=T, alpha=1)
   #Param
   Param_best = coef(cvfit, s = "lambda.min")
   #Fit in Test
-  Prediction = predict(cvfit, newx = X_test, s = "lambda.min")
-  Loss = RMSE(Prediction, Test_y)
+  #Prediction = predict(cvfit, newx = X_test, s = "lambda.min")
+  #Loss = RMSE(Prediction, Test_y)
   
   #Variation explained Given the lambda that minimizes the error function
   Explained_variance = cvfit$glmnet.fit$dev.ratio[which(cvfit$glmnet.fit$lambda == cvfit$lambda.min)]
@@ -388,10 +412,11 @@ Prepare_metabolome = function(Metabolome, Metabolites, Covariates){
 }
 
 Prepare_cutC_shortbred = function(Cluster_abundance, Metabolites, Covariates){
-  Cluster_abundance %>% select(-c(Hits,TotMarkerLength)) %>% spread(Family, Count) -> Cluster_abundance2
-  Cluster_abundance2 %>% summarise_if(is_numeric, sum) %>% t() %>% as.data.frame() %>%
-    rownames_to_column() %>% filter(V1 > 0) -> Keep_columns 
-  Cluster_abundance2 %>% select(c("ID",Keep_columns$rowname)) -> Cluster_abundance2
+  Cluster_abundance2 = Cluster_abundance
+  #Cluster_abundance %>% select(-c(Hits,TotMarkerLength)) %>% spread(Family, Count) -> Cluster_abundance2
+  #Cluster_abundance2 %>% summarise_if(is_numeric, sum) %>% t() %>% as.data.frame() %>%
+  #  rownames_to_column() %>% filter(V1 > 0) -> Keep_columns 
+  # Cluster_abundance2 %>% select(c("ID",Keep_columns$rowname)) -> Cluster_abundance2
   
   List_output = Match_dataset(Metabolites, Covariates, Cluster_abundance2)
   Metabolites_meta = List_output[[1]]; Covariates_meta=List_output[[2]]; Cluster_abundance2=List_output[[3]] 
