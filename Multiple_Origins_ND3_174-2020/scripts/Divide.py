@@ -1,5 +1,7 @@
-MSA = "../Data/Corrected_Alignment_reptiles.fa"
-TSV = "../Data/Postion_nucleotide_reptiles.tsv"
+
+#Input: MSA of diapsida and table with status in position 174 in diapsida
+MSA = "Corrected_Alignment_reptiles.fa"
+TSV = "Postion_nucleotide_reptiles.tsv"
 
 
 gaps = []
@@ -35,7 +37,7 @@ with open(MSA) as File:
 
 
 
-with open("../Data/MSA_gap.fa","w") as M:
+with open("MSA_gap.fa","w") as M:
 	M.write(GAP)
-with open("../Data/MSA_ins.fa","w") as M:
+with open("MSA_ins.fa","w") as M:
 	M.write(INS)
