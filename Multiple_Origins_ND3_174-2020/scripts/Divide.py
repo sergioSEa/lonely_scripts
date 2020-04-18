@@ -1,0 +1,41 @@
+MSA = "../Data/Corrected_Alignment_reptiles.fa"
+TSV = "../Data/Postion_nucleotide_reptiles.tsv"
+
+
+gaps = []
+insertion = []
+with open(TSV) as File:
+	for line in File:
+		l = line.rstrip().split()
+		if l[1]  == "-":
+			gaps.append(l[0])
+		else:
+				
+			insertion.append(l[0])
+
+GAP = ""
+INS = "" 
+with open(MSA) as File:
+	for line in File:
+		if line[0] == ">":
+			l = line.rstrip()[1:]
+			if l in gaps:
+				add_gap = True
+				add_insertion = False
+			elif l in insertion:
+				add_insertion = True
+				add_gap = False
+			else:
+				print(l)
+				exit("Error")
+		if add_gap == True:
+			GAP += line			
+		elif add_insertion == True:
+			INS += line
+
+
+
+with open("../Data/MSA_gap.fa","w") as M:
+	M.write(GAP)
+with open("../Data/MSA_ins.fa","w") as M:
+	M.write(INS)
