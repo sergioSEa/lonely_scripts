@@ -5,7 +5,7 @@ C0 = []
 C1 = []
 
 
-Input = "../Data/MSA_ins.fa"
+Input = "MSA_ins.fa" #Output from Divide.py
 with open(Input, "r") as INPUT:
 	for line in INPUT:
 		if line[0] == ">" :
