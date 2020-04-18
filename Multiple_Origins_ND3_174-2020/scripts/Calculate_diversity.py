@@ -2,7 +2,7 @@
 
 import numpy as np
 MSA = "Corrected_Alignment_reptiles.fa"
-METADATA = "../Data/Metadata_sp.csv" #Obained from Analysis_diapsida.R:  Ancestral_state()
+METADATA = "Metadata_sp.csv" #Obained from Analysis_diapsida.R:  Ancestral_state()
 
 
 Dic_frequencies = {"Testudines":{}, "Birds":{}, "Crocodile":{}, "Lizards":{}}
