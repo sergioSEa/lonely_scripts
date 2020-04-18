@@ -1,10 +1,8 @@
 ###Computes Shanon entropy per position from each lineage
 
 import numpy as np
-
-MSA = "Aligned_clean.fa"
-MSA = "../Data/Corrected_Alignment_reptiles.fa"
-METADATA = "../Data/Metadata_sp.csv"
+MSA = "Corrected_Alignment_reptiles.fa"
+METADATA = "../Data/Metadata_sp.csv" #Obained from Analysis_diapsida.R:  Ancestral_state()
 
 
 Dic_frequencies = {"Testudines":{}, "Birds":{}, "Crocodile":{}, "Lizards":{}}
