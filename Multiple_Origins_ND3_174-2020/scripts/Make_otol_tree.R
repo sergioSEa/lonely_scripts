@@ -3,7 +3,7 @@ library(ape)
 library(phytools)
 library(rotl)
 
-dataset = read_tsv("Postion_nucleotide_diapsida.tsv",col_names=F)
+dataset = read_tsv("Diapsida_table.tsv",col_names=F)
 
 
 #############################################################
