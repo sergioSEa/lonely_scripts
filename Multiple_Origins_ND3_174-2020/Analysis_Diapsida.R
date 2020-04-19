@@ -25,7 +25,7 @@ library(Biostrings)
 
 Ancestral_state = function(){
     #Dataset needed. Table of states and phylogenetic tree
-    dataset = read_tsv("Postion_nucleotide_diapsida.tsv",col_names=F)
+    dataset = read_tsv("Diapsida_table.tsv",col_names=F)
     Tree3 = phyloseq::read_tree("Total_tree.tree")
 
     #If any UNVERIFIED record present, remove
@@ -313,7 +313,7 @@ Process_entrophy = function(){
 }
 
 Study_codon_frequencies(){
-        #conds.tsv is obtained from Study_conds_interstion2.py
+        #condons.tsv is obtained from Study_conds_interstion2.py
   
         ###############################
         #######Codon analysis##########
