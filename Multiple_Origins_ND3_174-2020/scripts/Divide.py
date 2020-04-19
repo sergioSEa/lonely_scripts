@@ -1,7 +1,7 @@
 
 #Input: MSA of diapsida and table with status in position 174 in diapsida
-MSA = "Corrected_Alignment_reptiles.fa"
-TSV = "Postion_nucleotide_reptiles.tsv"
+MSA = "Alignment_diapsida.fa"
+TSV = "Diapsida_table.tsv"
 
 
 gaps = []
