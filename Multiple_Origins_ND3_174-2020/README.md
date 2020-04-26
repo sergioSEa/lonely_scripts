@@ -13,5 +13,5 @@ For all subsequent analysis we work with a subset of those records that only con
 2. Obtain a phylogenetic tree for all Diapsiada. This was done using **Make_otol_tree.R** and the R package Rotol. The resulting tree is available with the data. The open tree of life version 11.4, labelled_supertree_ottnames.tre was used as input.
 * Requirements: R, tidyverse, Rotl, ape, phytools
 3. Analysis of the sequence and phylogenetic patterns of the insertion. This is made by using **Analysis_Diapsida.R**. This script is composed of different functions for each of the analysis from the manuscript. The input data for them is made available. The scripts for generating that data are included in the scripts directory.
-* Requirements: R, tidyverse, ape, phytools, ggtree, ggimage, phangorn, ggstance, Biostrings
+* Requirements: R, tidyverse, ape, phytools, ggtree, ggimage, phangorn, ggstance, Biostrings, castor
 
