@@ -1,14 +1,14 @@
 #Script used in order to analyze Diapsida records.
 
 #The output of Prepare_dataset.sh generates a table of Species and nucleotide found in position 174 and a MSA of those records
-#In this  script we will only use the records that correspond to the phylogenetic group of Diapsiada
+#In this  script we will only use the records that correspond to the phylogenetic group of Diapsida
 
 #Parts:
-#1. Ancestral State reconstruction: Requires dataset of diapsida (subset of Prepare_dataset.sh) and phylogenetic tree (can be obtained from Rotl, check Make_otol_tree.R
-#2. Transition count: Requires state likelihoods produced at 1
-#3. Study of codon frequency by bird order. Requires states in birds (can be obtained at 1.), a table of Orders per bird and for visualization a tree from ED Jarvis 2015 Sciecne
-#4. Entrophy. Requires entrophy metrics. Requires to run Calculate_diversity.py, which needs both the output from 1.  and an MSA only of diapsiad
-#5. Codon analysis: Requieres output from tudy_codons_insertion2.py which needs to run Divide.py
+#1. Ancestral State reconstruction: Requires dataset of diapsida (subset of Prepare_dataset.sh) and phylogenetic tree (can be obtained from Rotl, check Make_otol_tree.R)
+#2. Transition count: Requires state likelihoods produced at #1
+#3. Study of codon frequency by bird order. Requires states in birds (can be obtained at #1), a table of Orders per bird and, for visualization, the topology of ED Jarvis 2015 Science
+#4. Entrophy. Requires entrophy metrics. Requires to run Calculate_diversity.py, which input is both the output from #1 and a MSA only of diapsida.
+#5. Codon analysis: Requieres output from study_codons_insertion2.py (input generated from Divide.py)
 
 
 
