@@ -1,6 +1,5 @@
-setwd("~/PhD/WORK/Collaborations/Nijmegen/Final_version/")
 source(file = "Functions_Oral_Microbiome_manuscript.R")
-source("~/PhD/WORK/Collaborations/Debby/PPI/Data/ancom_scripts/ancom_v2.1.R")
+source(file = "ancom_v2.1.R")
 
 set.seed(2020)
 
