@@ -52,12 +52,19 @@ Diet_regressors = read_tsv(file = "20150722_Diet__1135patients.txt")
 Lipids_aa = read_tsv("LLD_nmr_total.txt")
 untargeted_metabolome = read_tsv("data_1442samples_LLD_baseline_1183plasma_metabolites.txt")
 key_metabolome = read_tsv("key_lld_1183meta_annotation.txt")
+
+#Expression
+#Expression_counts = read_tsv(file = "Matrix_counts.tsv")
+
 ####################################
 
 #1. Assess relations among Metabolites of interest.
   ##1.1 Make correlation matrix and distributions
   ###Samples with high levels of TMAO are saved in TMAO_outlayers
-TMAO_outlayers = Metabolite_exploration(Dependent_metabolites)
+Results_exploration = Metabolite_exploration(Dependent_metabolites)
+TMAO_outlayers = Results_exploration[[1]]
+Correlations = Results_exploration[[2]]
+
 ##1.2 Address statistical significance and direction of correlations
   ###Transformation of metabolites to Normality
 Normalized_dependent_metabolites = apply(Dependent_metabolites[2:length(Dependent_metabolites)], 2, Rank_norm) %>% as_tibble()
@@ -101,13 +108,8 @@ for(Dependent in colnames(Dependents)){
   
 }
 
-  ##Are these associations independent of Kidney function?
+##Are these associations independent of Kidney function?
 
-Compute_GFR = function(x){
-  x %>% mutate(GFR= ifelse(Gender==1, ifelse(Creatinine<= 0.7,144*(Creatinine/0.7)-0.329 *(0.993)^Age, 144*(Creatinine/0.7)-1.209 * (0.993)^Age), NA)) -> x
-  x %>% mutate(GFR= ifelse(Gender==0, ifelse(Creatinine<=0.9,141*(Creatinine/0.9)-0.411 * (0.993)^Age, 141*(Creatinine/0.9)-1.209 * (0.993)^Age), GFR)) -> x
-  return(x)
-}
 
 Datasets = Match_dataset(Regressor = Clinical_Questionaries, Metabolites = Normalized_dependent_metabolites, Covariates )
 Datasets[[2]] %>% mutate(Creatinine = Datasets[[3]]$`Creatinine (umol/L)`) -> Covariates
@@ -254,17 +256,75 @@ Fig_pathway = Make_heatmap(Results_Pathway, "Pathway_heatmap")
 
 #7 Gene abunance (shorbred)
 Gene_markers = read_tsv(file = "../TMAO_cutC/Total_table.tsv")
-Gene_markers %>% group_by(ID) %>% summarise(Count = sum(Count)) -> Gene_markers
-Input_shortbred = Prepare_cutC_shortbred(Gene_markers, Metabolites = Dependent_metabolites, Covariates = Covariates)
-Results_shortbred = Iterate_Metabolites(Input_shortbred[[1]], Input_shortbred[[2]], Input_shortbred[[3]], "MGS_shortbred2",FDR_iter = 0)
 
+#Summing_up
+Gene_markers %>% group_by(ID) %>% summarise(Count = sum(Count)) -> Gene_markers2
+Input_shortbred = Prepare_cutC_shortbred(Gene_markers2, Metabolites = Dependent_metabolites, Covariates = Covariates)
+Results_shortbred = Iterate_Metabolites(Input_shortbred[[1]], Input_shortbred[[2]], Input_shortbred[[3]], "MGS_shortbred2",FDR_iter = 0)
+Results_shortbred %>% ggplot(aes(x=Metabolite, y=as.numeric(Beta), fill=Pvalue)) + geom_bar(stat = "identity") + theme_bw()
+#Not summing up
+Gene_markers %>% select(c(ID, Count,Family)) %>% spread(Family, Count) -> Gene_markers1
+Input_shortbred = Prepare_cutC_shortbred(Gene_markers1, Metabolites = Dependent_metabolites, Covariates = Covariates)
+Results_shortbred = Iterate_Metabolites(Input_shortbred[[1]], Input_shortbred[[2]], Input_shortbred[[3]], "MGS_shortbred2",FDR_iter = 0)
 Results_shortbred %>% mutate(log10Pval = -log10(Pvalue)) %>% select(Metabolite, Regressor, log10Pval) %>% spread(Metabolite, log10Pval) %>% as.data.frame() %>% column_to_rownames(var = "Regressor") -> wide_results
-pheatmap(wide_results, "Shortbred_heatmap") -> Fig_shortbred
+pheatmap(wide_results)
+
+
 #ggsave(filename = "Model_stats/Shortbred_heatmap.pdf", Fig_shortbred, scale = 3)
 
+#7.2 Gene abundance (humann2)
+#without summing up
+#Dependent_metabolites %>% mutate(Ratio = TMAO/Choline) -> Dependent_metabolites
+Genes_meta = Prepare_humman2_gene(Gene_abundance, Dependent_metabolites, Covariates)
+Results_humann2 = Iterate_Metabolites(Genes_meta[[1]], Genes_meta[[2]], Genes_meta[[3]], "MGS_humman2",FDR_iter = 0)
+Fig_pathway = Make_heatmap(Results_humann2, "Gene_heatmap")
+#Summingup
+Genes_meta2 = Prepare_humman2_gene(Gene_abundance, Dependent_metabolites, Covariates,T)
+Results_humann2_2 = Iterate_Metabolites(Genes_meta2[[1]], Genes_meta2[[2]], Genes_meta2[[3]], "MGS_humman2_sum",FDR_iter = 0)
+Fig_pathway = Make_heatmap(Results_humann2_2, "Gene2_heatmap")
 
 
-#7. Genetics
+#7. Transcriptomics 
+Prepare_expression = function(Expression_Counts, Dependent_metabolites, Covariates){
+  colnames(Expression_counts)[2:length(colnames(Expression_counts))] -> Column_ID 
+  Expression_counts$ID -> New_colnames
+  Expression_counts %>% select(-ID) %>% t() %>% as_tibble()  -> Expression_counts2
+  colnames(Expression_counts2) = New_colnames
+  Expression_counts2[,1:51800] -> Expression_counts2
+  Metabolome_transformation(Expression_counts2,missing_filter = 0.2)  -> Expression_counts2
+  Expression_counts2 %>% as_tibble() %>% mutate(ID = Column_ID) -> Expression_counts2
+  
+  List_output = Match_dataset(Dependent_metabolites, Covariates, Expression_counts2)
+  Metabolites_meta = List_output[[1]]; Covariates_meta=List_output[[2]]; Regressors_trs=List_output[[3]]
+  return(list(Metabolites_meta, Covariates_meta,Regressors_trs))
+}
+Input_expression = Prepare_expression(Expression_Counts, Dependent_metabolites, Covariates)
+Results_expression = Iterate_Metabolites(Input_expression[[1]], Input_expression[[2]], Input_expression[[3]], "Expression")
+
+library(enrichR)
+library(biomaRt)
+
+Results_expression = read_tsv("Transcriptomics2.tsv")
+#1: Make FDR
+Results_expression %>% mutate(FDR=p.adjust(Pvalue, "fdr")) -> Results_expression
+#2: Filter based on FDR
+Results_expression %>% filter(FDR < 0.05) -> DE_genes
+#3: Performe GO-term enrichment
+ensembl <- useMart("ensembl", dataset="hsapiens_gene_ensembl")
+for (Metabolite in unique(DE_genes$Metabolite)){
+  print(Metabolite)
+  Output_list = Do_enrichment(DE_genes, Metabolite, ensembl)
+  Output_list[[3]] %>% mutate(GO = "Function") %>% dplyr::select(c("Term", "Adjusted.P.value", "Overlap", "GO", "Genes"))  -> Function_table
+  Output_list[[2]] %>% mutate(GO = "Component") %>% dplyr::select(c("Term", "Adjusted.P.value", "Overlap", "GO", "Genes"))  -> Component_table
+  Output_list[[1]] %>% mutate(GO = "Process") %>% dplyr::select(c("Term", "Adjusted.P.value", "Overlap", "GO", "Genes")) -> Process_table
+  
+  Table = rbind(Function_table, rbind(Component_table, Process_table))
+  Table %>% mutate("Metabolite" = Metabolite) -> Table
+  print(DT::datatable(Table))
+}
+
+
+
 #....
 #8. Metabolomics
 ##Lipds and amino-acid related metabolites
@@ -296,8 +356,9 @@ select(key_metabolome,c(meta, name)) -> Dic_key
 lookup(terms=Results_metabolome_un$Regressor, Dic_key$meta, Dic_key$name) -> metabolite_names
 Results_metabolome_un$Regressor = metabolite_names
 
+Results_metabolome_un %>% distinct(Regressor, Metabolite, .keep_all = TRUE) -> Results_metabolome_un
 
-Fig_untargeted_metabolites = Make_heatmap(Results_metabolome_un, "untargeted_heatmap")
+Fig_untargeted_metabolites = Make_heatmap(Results_metabolome_un, "untargeted_heatmap", Scale=6, size_rows=2)
 #ggsave(filename = "Model_stats/untargeted_heatmap.pdf", Fig_untargeted_metabolites, scale = 3)
 
 ##Need some expert in metabolism to check all this...
@@ -306,43 +367,90 @@ Fig_untargeted_metabolites = Make_heatmap(Results_metabolome_un, "untargeted_hea
 #X Random Forest
 
 
-FeatureSelection_RandomForest = function(Input_x, Dependent_metabolites, Covariates, Fold){
-  
+FeatureSelection_RandomForest = function(Input_x, Dependent_metabolites, Covariates, Fold, Method="Regression"){
+  RETURN = NULL
   set.seed(111)
+  Iteration = colnames(Dependent_metabolites)[2:length(colnames(Dependent_metabolites))]
+  Iteration[!Iteration=="quartile"] -> Iteration
+  for (Metabolite in Iteration){
+  
+  print(Metabolite)
+  if (Metabolite == "TMAO"){ Dependent_metabolites = filter(Dependent_metabolites, TMAO<20)  }
+    
+    Quantile_input = select(Dependent_metabolites,Metabolite) 
+    colnames(Quantile_input) = c("Meta")
+    Quantile_input$quartile <- with(Quantile_input, cut(Meta, breaks=quantile(Meta, probs=seq(0,1, by=0.25), na.rm=TRUE), include.lowest=TRUE))
+    Dependent_metabolites %>% mutate(quartile = Quantile_input$quartile) -> Dependent_metabolites
   ##10-fold cross-validation, using OoB MSE as error measure
   flds <- createFolds(Input_x, k = Fold, list = TRUE, returnTrain = FALSE)
   Min_loss = vector()
+  
   for (i in seq(Fold)){
     Test = Input_x[ flds[[i]], ]
     Train_i = Input_x[-flds[[i]], ]
     
     Train_i %>% select(-c("Age","Gender","BMI","Creatinine","GFR")) -> Train
     Input_train = Match_dataset(Train, Metabolites = Dependent_metabolites, Covariates = Covariates) 
-    Results_train = Iterate_Metabolites(select(Input_train[[1]],c(ID,TMAO)),Input_train[[2]],Input_train[[3]], "MGS_species_cv", FDR_iter = 0)
-    Results_train %>% filter(Pvalue < 0.01) -> Feature_selection
+    Results_train = Iterate_Metabolites(select(Input_train[[1]],c(ID,Metabolite)),Input_train[[2]],Input_train[[3]], "MGS_species_cv", FDR_iter = 0)
+    #Results_train = Iterate_Metabolites(select(Input_train[[1]],c(ID,`y-butyrobetaine`)),Input_train[[2]],Input_train[[3]], "MGS_species_cv", FDR_iter = 0)
+    Results_train %>% filter(Pvalue < 0.05) -> Feature_selection
     #Add covaraites?
     Input_train[[3]] %>% select(Feature_selection$Regressor) %>% cbind(select(Input_train[[2]],-ID)) -> Train
-    RF_train = Fit_RandomForest(Train, Input_train[[1]]$TMAO)
-    Model_RF = RF_train[[2]]
     
-    Input_test = Match_dataset(Test, Metabolites = Dependent_metabolites, Covariates = Covariates) 
-    predTest = predict(Model_RF, Input_test[[3]])
-    Loss_test = RMSE(predTest,Input_test[[1]]$TMAO)
+    if (Method == "Regression"){
+      RF_train = Fit_RandomForest(Train, as_vector(select(Input_train[[1]], Metabolite)))
+      Model_RF = RF_train[[2]]
+      Input_test = Match_dataset(Test, Metabolites = Dependent_metabolites, Covariates = Covariates) 
+      predTest = predict(Model_RF, Input_test[[3]])
+      Loss_test = RMSE(predTest,as_vector(select(Input_test[[1]],Metabolite)))
+    } else {
+      RF_train = Fit_RandomForest_classification(Train, as_vector(select(Input_train[[1]], Metabolite)), as_vector(select(Input_train[[1]], quartile)))
+      Model_RF = RF_train[[2]]
+      Input_test = Match_dataset(Test, Metabolites = Dependent_metabolites, Covariates = Covariates) 
+      predTest = predict(Model_RF, Input_test[[3]])
+      Loss_test = error(predTest,as_vector(select(Input_test[[1]], Metabolite)))
+      
+    }
+    
     if (length(Min_loss) == 0){
       Min_loss = Loss_test
       Model = Model_RF
       Importance = RF_train[[1]]
+      Variables = Feature_selection$Regressor
     }else if (Loss_test < Min_loss){
       Min_loss = Loss_test
       Model = Model_RF
       Importance = RF_train[[1]]
+      Variables = Feature_selection$Regressor
     }
     
   }
-  return(list(Min_loss, Model, Importance))
+  if (Method == "Regression"){
+    Input_x %>% select(Variables,ID) -> Final_set
+    Input_final = Match_dataset(Final_set, Metabolites = Dependent_metabolites, Covariates = Covariates) 
+    
+    RF = Fit_RandomForest(select(Input_final[[3]],-ID), as_vector(select(Input_final[[1]], Metabolite)))
+    Model_RF = RF[[2]]
+    Importance = RF[[1]]
+    
+  }else{
+    Input_x %>% select(Variables,ID) -> Final_set
+    Input_final = Match_dataset(Final_set, Metabolites = Dependent_metabolites, Covariates = Covariates) 
+    RF = Fit_RandomForest_classification(select(Input_final[[3]], -ID), as_vector(select(Input_final[[1]], Metabolite)), as_vector(select(Input_final[[1]], quartile)))
+    Model_RF = RF[[2]]
+    Importance = RF[[1]]
+    
+  }
+    
+    OUT = list(RF, Importance, Metabolite)
+    RETURN = list(RETURN, OUT)
+  }
+  return(RETURN)
 }
 #Species
-S1 = Prepare_Metagenome_species(Species_abundance, Metabolites = Dependent_metabolites, Covariates = Covariates)
+Species_abundance %>% select(-ID) %>% mutate_all(Presence) %>% summarise_all(sum) %>% mutate_all(Percentage) %>% select_if(Selection) -> Selected
+
+S1 = Prepare_Metagenome_species(select(Species_abundance, c(ID,colnames(Selected))), Metabolites = Dependent_metabolites, Covariates = Covariates)
 S1[[3]] %>% cbind(select(S1[[2]],-ID)) %>% as_tibble() %>% drop_na() -> Input_Species
 FeatureSelection_RandomForest(Input_x = Input_Species,Dependent_metabolites = Dependent_metabolites ,  Covariates= Covariates, Fold = 10)
 #Diet
@@ -365,31 +473,49 @@ S1[[3]] %>% cbind(select(S1[[2]],-ID)) %>% as_tibble() %>% drop_na() -> Input_me
 FeatureSelection_RandomForest(Input_x = Input_metabolome_rf,Dependent_metabolites = Dependent_metabolites ,  Covariates= Covariates, Fold = 10)
 
 #X Lasso
-S1 = Prepare_Metagenome_species(Species_abundance, Metabolites = Dependent_metabolites, Covariates = Covariates)
+Presence <- function(x, na.rm = FALSE){ sapply(X = x, FUN= function(x){ if(as.numeric(x)>0){ return(1) }else{return(0)}}) }
+Percentage <- function(x, na.rm = FALSE){ x/dim(Species_abundance)[[1]] }
+Selection <- function(x, na.rm = FALSE){ x > 0.1 }
+Species_abundance %>% select(-ID) %>% mutate_all(Presence) %>% summarise_all(sum) %>% mutate_all(Percentage) %>% select_if(Selection) -> Selected
+
+
+
+S1 = Prepare_Metagenome_species(select(Species_abundance, c("ID",colnames(Selected))), Metabolites = Dependent_metabolites, Covariates = Covariates)
+Lasso_itereation(S1[[3]],S1[[1]], "only_bacteria")
+
+Lasso_itereation(drop_na(S1[[2]]), filter(S1[[1]], ID %in% drop_na(S1[[2]])$ID), "only_covariates")
+
 S2 = Prepare_diet(Diet_regressors, S1[[3]], Covariates)
+Lasso_itereation(drop_na(S2[[3]]),filter(S1[[1]], ID %in% drop_na(S2[[3]])$ID), "diet")
+
 Species_diet = S2[[1]] %>% cbind(select(S2[[3]], -ID))
+Lasso_itereation(drop_na(Species_diet),filter(S1[[1]], ID %in% drop_na(Species_diet)$ID), "diet_bacteria")
+
 Species_diet %>% cbind(select(S2[[2]],-ID)) %>% as_tibble() %>% drop_na() -> Input_spdi
 S1[[1]] %>% filter(ID %in% Input_spdi$ID) -> Dependent
+Lasso_itereation(Input_spdi,Dependent, "diet_bacteria_cov")
+
 
 #Iterate for each metabolite
+Lasso_itereation = function(Input_spdi, Dependent, NAME){
 
-for (Metabolite in colnames(select(Dependent, -ID))){
-  Dependent %>% select(Metabolite) %>% as_vector() -> Dep
-  Lasso_list = Fit_lasso(select(Input_spdi, -ID), Dep)
-  
-  Lasso_Model = Lasso_list[[1]]
-  Betas = Lasso_list[[2]]
-  Variance_explained = Lasso_list[[3]]
-  
-  Non_zero_betas = Betas[which(Betas != 0)]
-  Non_zero_betas_names = Betas@Dimnames[[1]][which(Betas != 0 ) ]
-  DF_beta = tibble(Feature = Non_zero_betas_names, Beta =  Non_zero_betas)
-  write_tsv(x = DF_beta, path = paste(c("Model_stats/Lasso_betas_", Metabolite, ".tsv"), collapse = ""))
-  print(paste(c(Variance_explained, Metabolite), collapse = " "))
-  Plot = plot(Lasso_Model)
-  print(Plot)
+  for (Metabolite in colnames(select(Dependent, -ID))){
+    Dependent %>% select(Metabolite) %>% as_vector() -> Dep
+    Lasso_list = Fit_lasso(select(Input_spdi, -ID), Dep)
+    
+    Lasso_Model = Lasso_list[[1]]
+    Betas = Lasso_list[[2]]
+    Variance_explained = Lasso_list[[3]]
+    
+    Non_zero_betas = Betas[which(Betas != 0)]
+    Non_zero_betas_names = Betas@Dimnames[[1]][which(Betas != 0 ) ]
+    DF_beta = tibble(Feature = Non_zero_betas_names, Beta =  Non_zero_betas)
+    write_tsv(x = DF_beta, path = paste(c("Model_stats/Lasso_betas_", Metabolite,"_", NAME, ".tsv"), collapse = ""))
+    print(paste(c(Variance_explained, Metabolite), collapse = " "))
+    Plot = plot(Lasso_Model)
+    print(Plot)
+  }
 }
-
 
 
 
@@ -413,3 +539,7 @@ for (Metabolite in colnames(select(Dependent, -ID))){
 #####Which metabolites and proteins are linked to its presence in blood?
 #######Check correlation of TMAO and bile-acids
 #####Are these linked to known TMAO phenotypes?
+
+
+
+
