@@ -1,6 +1,6 @@
 #TMAO correlation with microbiome
 
-setwd("~/PhD/WORK/TMAO_metagenomics")
+setwd("~/Documents/PhD/TMAO_project/MSS/")
 library(tidyverse) #Data handling
 library(microbiome) #cdr transformation source("Microbiome_function.R")
 library(reshape2)
@@ -10,39 +10,48 @@ library(pheatmap)
 source("Functions_TMAO.R")
 
 ##LLDeep data
-Dependent_metabolites = read_tsv("Pheno_file.tsv")
-Covariates =  read_tsv("Cov_file.tsv")
+Dependent_metabolites = read_tsv("Data/LLD/Pheno_file.tsv")
+Covariates =  read_tsv("Data/LLD/Cov_file.tsv")
 
-Species_abundance = read_tsv("data_LLD_baseline_1135samples_698species.txt")
-Genus_abundance = read_tsv("data_LLD_baseline_1135samples_698genus.txt")
-Family_abundance = read_tsv("data_LLD_baseline_1135samples_698family.txt")
-Phylum_abundance = read_tsv("data_LLD_baseline_1135samples_698phylum.txt")
+Species_abundance2 = read_tsv("Data/LLD/LLD_MP3_250.txt") %>% filter(grepl("s__", ID))%>% select(-X257)
+Species_abundance2 %>% t() %>% as.data.frame() %>% rownames_to_column("ID") %>% as_tibble() %>% `colnames<-`(c("ID", Species_abundance2$ID)) %>%
+  filter(! ID == "ID")  -> Species_abundance_MP3
+apply(select(Species_abundance_MP3,-ID), 2, FUN= function(x){ as.numeric(x) } ) %>% as_tibble() %>% mutate(ID = Species_abundance_MP3$ID) %>% `colnames<-`(c(colnames(select(Species_abundance_MP3, -ID)), "ID")) -> Species_abundance_MP3
 
-Gene_abundance = read_tsv(file = "Gene_abundance")
-Cluster_abundance = read_tsv(file = "../TMAO_cutC/Total_table.tsv")
-Gene_family_abundance = read_tsv("data_LLD_baseline_1135samples_489pathway.txt")
+Species_abundance = read_tsv("Data/LLD/data_LLD_baseline_1135samples_698species.txt")
+Genus_abundance = read_tsv("Data/LLD/data_LLD_baseline_1135samples_698genus.txt")
+Family_abundance = read_tsv("Data/LLD/data_LLD_baseline_1135samples_698family.txt")
+Phylum_abundance = read_tsv("Data/LLD/data_LLD_baseline_1135samples_698phylum.txt")
 
-Clinical_Questionaries = read_tsv("LLD_1135subjects_allphenotypes.txt")
+Gene_abundance = read_tsv(file = "Data/LLD/Gene_abundance")
+#Cluster_abundance = read_tsv(file = "Data/LLD/Total_table_cutC_shortbred.tsv")
+Gene_family_abundance = read_tsv("Data/LLD/data_LLD_baseline_1135samples_489pathway.txt")
+
+Clinical_Questionaries = read_tsv("Data/LLD/LLD_1135subjects_allphenotypes.txt")
 Diet_start = which(colnames(Clinical_Questionaries)=="alcohol_products_log") ; Diet_end = which(colnames(Clinical_Questionaries)=="ACE_inhibitor")-1
 Diet_regressors = Clinical_Questionaries[,Diet_start:Diet_end] ; Diet_regressors %>% mutate(ID = Clinical_Questionaries$ID) -> Diet_regressors
 Clinical_Questionaries = Clinical_Questionaries[,1:Diet_start -1 ]
 
-CutC_LLD = read_tsv("../TMAO_cutC/Total_table.tsv")
+CutC_LLD = read_tsv("Data/LLD/Total_table_cutC_shortbred.tsv")
+
+BGC_LLD = read_tsv("Data/LLD/RPKM_BiG-MAP2.tsv")
+
+
 ##300 OB data
-Dependent_metabolites_300O = read_tsv(file = "300OB/330_O_metabolite_measures.tsv")
+Dependent_metabolites_300O = read_tsv(file = "Data/300OB/330_O_metabolite_measures.tsv")
 colnames(Dependent_metabolites_300O)[1] =  "ID"
 Dependent_metabolites_300O %>% drop_na() -> Dependent_metabolites_300O
 sapply(select(Dependent_metabolites_300O, -ID), FUN= function(x){transform(as.numeric(x))}) %>% as_tibble() %>% mutate(ID = Dependent_metabolites_300O$ID) -> Dependent_metabolites_300O
 
-Species_abundance_300O = read_tsv("300OB/300OB_381sp_unclassified_removed_298samples.txt")
+Species_abundance_300O = read_tsv("Data/300OB/300OB_381sp_unclassified_removed_298samples.txt")
 colnames(Species_abundance_300O) = as.vector(sapply(colnames(Species_abundance_300O), FUN = function(x){ if(x=="ID"){ return("ID")} else{str_split(x,"\\|")[[1]][7]} }))
-Gene_family_abundance_300O = read_tsv("300OB/300OB_407_generalpath_RTabu_uc_removed_298samples.txt")
+Gene_family_abundance_300O = read_tsv("Data/300OB/300OB_407_generalpath_RTabu_uc_removed_298samples.txt")
 
-Phenotypes_300O = read_tsv("300OB/300OB_phenotypes.txt")
+Phenotypes_300O = read_tsv("Data/300OB/300OB_phenotypes.txt")
 Covariates_300O = select(Phenotypes_300O, c("ID", "Age", "Gender","BMI"))
 Covariates_300O %>% mutate(Gender = Gender-1) -> Covariates_300O
 
-CutC_300OB = read_tsv("300OB/Total_table_cutC_300OB.tsv")
+CutC_300OB = read_tsv("Data/300OB/Total_table_cutC_300OB.tsv")
 #######################
 ###Analysis############
 #######################
@@ -214,6 +223,21 @@ for (Metabolite in c("TMAO", "y-butyrobetaine")){
   Results_Diet %>% filter(Metabolite == Metabolite) %>% filter(Pvalue < 0.2) -> Predictors
   Fit_RandomForest(select(Regr[[3]], Predictors$Regressor), Regressor) -> RF_diet
 }
+
+
+
+
+####BGC
+BGC_LLD %>% t() %>% as.data.frame() %>% rownames_to_column("gene_clusters") %>% as_tibble() %>% `colnames<-`(c("ID", BGC_LLD$gene_clusters)) %>%
+  filter(! ID == "gene_clusters") -> BGC_LLD
+apply(select(BGC_LLD,-ID), 2, FUN= function(x){ as.numeric(x) } ) %>% as_tibble() %>% mutate(ID = BGC_LLD$ID) %>% `colnames<-`(c(colnames(select(BGC_LLD, -ID)), "ID")) -> BGC_LLD
+
+Dependent_metabolites
+Covariates
+BGC_LLD
+
+Match_dataset(Dependent_metabolites, Covariates, BGC_LLD) -> BGC_match
+Iterate_Metabolites(BGC_match[[1]], BGC_match[[2]], BGC_match[[3]], "BGC_LLD",Correct = "BH") -> results_BGCs
 
 ####Gene abundance
 
