@@ -2,7 +2,7 @@
 #Differential abundance
 #Tree
 
-setwd("~/PhD/WORK/Collaborations/Debby/PPI")
+setwd("~/Resilio Sync/Transfer/Collaborations/Debby/PPI")
 #General and visualization
 library(tidyverse)
 library(pheatmap)
@@ -28,7 +28,8 @@ metadata %>% mutate(Origin = ifelse(grepl("AGEO",Group), "Oral", "Gut")) %>% mut
 #Data used for Tree
 Tree = read.tree("Data/16S.tree")
 #Tree = read.tree("Data/16S.tree") 
-
+cbp2 <- c("#000000", "#E69F00", "#56B4E9", "#009E73",
+          "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
 #All_samples = read_csv("Data/Matrix_abundance.csv")#This is the data without merging it into higher taxonomical levels
 All_samples = read_csv("Data/Matrix_abundance.csv")
 #####################
@@ -53,12 +54,13 @@ Alpha_diversity = function(M, metadata){
   shannon_diversity = vegan::diversity(select(M,-ID), index = "shannon")
   metadata %>% mutate(Diversity = shannon_diversity) -> metadata
   
-  metadata %>% ggplot(aes(x=factor(Treatment), y=Diversity,col=Origin)) + geom_boxplot(outlier.size = NA) +geom_sina(aes(size=Reads)) +
-    theme_bw() -> Fig_alpha
+  metadata %>% ggplot(aes(x=factor(Treatment), y=Diversity,col=Origin)) + geom_boxplot(outlier.shape = NA) +geom_sina() +
+    theme_bw() + scale_colour_manual(values=cbp2) + scale_x_discrete(name ="Treatment Group", labels=c("0" = "Control", "1" = "Omeprazole")) -> Fig_alpha
   print(Fig_alpha)
 
   #kruskal.test(Diversity ~ Group, data=metadata)
   dunn.test(x=metadata$Diversity, g= metadata$Group)
+  return(Fig_alpha)
 }
 Beta_diversity = function(M, metadata, Input="standard"){
   print("Calculating Beta diversity and computing PCoA")
@@ -124,31 +126,19 @@ Beta_diversity_unifract = function(M=All_samples, metadata=metadata, Tree=Tree){
   tax_table(taxmat) -> taxmat
   phyloseq::phyloseq(ASV_table, taxmat) -> phylobjetc
   phyloseq::merge_phyloseq(phylobjetc,Tree, sample_data(sampledata)) -> phylobjetc
-  
-  phylobject_norm = rarefy_even_depth(phylobjetc, rngseed = 711, replace=F)
-  
-  #ordi = ordinate(phylobjetc, method="PCoA", distance="unifrac", weighted=T)
-  #ordi2 = ordinate(phylobjetc, method="PCoA", distance="unifrac", weighted=F)
-  #ordi3 = ordinate(phylobjetc, method="PCoA", distance="bray")
-  
+  phylobjetc -> phylobject_norm
+
   ordi_1 = ordinate(phylobject_norm, method = "PCoA", distance="unifrac", weighted=T)
-  #ordi2_1 = ordinate(phylobject_norm, method="PCoA", distance="unifrac", weighted=F)
-  #ordi3_1 = ordinate(phylobject_norm, method="PCoA", distance="bray")
   
-  #plot_ordination(phylobjetc, ordi, color="Treatment", shape="Origin") + theme_bw() -> Weighted_unifract_PCoA
-  #plot_ordination(phylobjetc, ordi2, color="Treatment", shape="Origin") + theme_bw() -> Unweighted_unifract_PCoA
-  #plot_ordination(phylobjetc, ordi3, color="Treatment", shape="Origin") + theme_bw() -> brai_PCoA
-  
-  plot_ordination(phylobject_norm, ordi_1, color="Treatment", shape="Origin") + theme_bw() -> Weighted_unifract_PCoA_rare
-  #plot_ordination(phylobject_norm, ordi2_1, color="Treatment", shape="Origin") + theme_bw() -> Unweighted_unifract_PCoA_rare
-  #plot_ordination(phylobject_norm, ordi3_1, color="Treatment", shape="Origin") + theme_bw() -> brai_PCoA_rare
+ 
+  plot_ordination(phylobject_norm, ordi_1, color="Treatment", shape="Origin") + theme_bw() + 
+  scale_color_manual(name = "Treatment Group", labels = c("Control", "Omeprazole"),values=cbp2)  -> Weighted_unifract_PCoA_rare
+  print(Weighted_unifract_PCoA_rare)
   
   meta <- as(sample_data(phylobject_norm), "data.frame")
   adonis(distance(phylobject_norm, method="unifrac", weighted=T) ~ Origin * Treatment,
          data = meta)
-  #adonis(distance(phylobject_norm, method="unifrac", weighted=F) ~ Origin * Treatment,
-  #       data = meta)
-  
+  return(Weighted_unifract_PCoA_rare)
 }
 
 Transformation_composition = function(Count_table){
@@ -541,9 +531,184 @@ New_tree = function(physeq, method = "sampledodge", nodelabf = NULL,
   return(p)
 }
 
+uniqueperm2 <- function(d) {
+  dat <- factor(d)
+  N <- length(dat)
+  n <- tabulate(dat)
+  ng <- length(n)
+  if(ng==1) return(d)
+  a <- N-c(0,cumsum(n))[-(ng+1)]
+  foo <- lapply(1:ng, function(i) matrix(combn(a[i],n[i]),nrow=n[i]))
+  out <- matrix(NA, nrow=N, ncol=prod(sapply(foo, ncol)))
+  xxx <- c(0,cumsum(sapply(foo, nrow)))
+  xxx <- cbind(xxx[-length(xxx)]+1, xxx[-1])
+  miss <- matrix(1:N,ncol=1)
+  for(i in seq_len(length(foo)-1)) {
+    l1 <- foo[[i]]
+    nn <- ncol(miss)
+    miss <- matrix(rep(miss, ncol(l1)), nrow=nrow(miss))
+    k <- (rep(0:(ncol(miss)-1), each=nrow(l1)))*nrow(miss) + 
+      l1[,rep(1:ncol(l1), each=nn)]
+    out[xxx[i,1]:xxx[i,2],] <- matrix(miss[k], ncol=ncol(miss))
+    miss <- matrix(miss[-k], ncol=ncol(miss))
+  }
+  k <- length(foo)
+  out[xxx[k,1]:xxx[k,2],] <- miss
+  out <- out[rank(as.numeric(dat), ties="first"),]
+  foo <- cbind(as.vector(out), as.vector(col(out)))
+  out[foo] <- d
+  t(out)
+}
+FDR_correction = function(Abundance_rarefy, Pvalues, metadata, Comparison= c("AGEFCTRL","AGEFOME"), Permutations = 100){
+  metadata %>% filter(Group %in% Comparison) %>% arrange(Sample)-> metadata
+  Abundance_rarefy %>%  filter(ID %in% metadata$Sample) %>% arrange(ID) -> Abundance_input
+  Permuted_Pvalues = vector()
+  uniqueperm2(metadata$Group) -> total_permutations
+  for (Permutation_number in 2:Permutations+1 ){
+    total_permutations[Permutation_number,1:length(metadata$Group)] -> Permutation_meta
+    Permuted = metadata
+    Permuted$Group = Permutation_meta
+    apply(select(Abundance_input, -ID), MARGIN = 2, FUN = function(x){ Test_groups(mutate(metadata, Dependent=x))}) -> Model_outcome_rarefy
+    Model_outcome_rarefy %>% t() %>%as_tibble() %>% as_vector() %>% as.vector() ->  permuted_pvalues
+    Permuted_Pvalues = c(Permuted_Pvalues,as.numeric(permuted_pvalues))
+  }
+  FDR_vector = vector()
+  Pvalues = Pvalues$Pvalue
+  for (Threshold in Pvalues){
+    Threshold = as.numeric(Threshold)
+    P = sum((Pvalues <= Threshold) *1)
+    FP = sum((Permuted_Pvalues <= Threshold)*1)
+    FDR = (FP/Permutations)/P
+    if (FDR >1){ FDR = 1}
+    #If there are already elements in the vector, dont let a higher pvalue have lower FDR than a lower pvalue. Make them equal.
+    if (length(FDR_vector) > 0){ if (FDR > FDR_vector[length(FDR_vector)]){ FDR = FDR_vector[length(FDR_vector)]} }
+    FDR_vector = c(FDR_vector,FDR)
+  }
+  return(FDR_vector)
+}
+
+Make_summary = function(Abundance=Abundance_rarefy, Metadata=metadata_rarefy, NAME_output){
+  SUMMARY = tibble()
+  for (Bacteria in colnames(Abundance)){
+    if (Bacteria == "ID"){ next }
+    print(Bacteria)
+    Abundance %>% select(Bacteria) %>% as_vector() -> Total_value
+    Total_value %>% mean() -> Total_mean
+    length(Total_value[Total_value == 0 ]) -> Total_na
+    Summary_bacteria = c(Total_mean, Total_na)
+    GROUPS = c("AGEFCTRL", "AGEFOME", "AGEOCTRL", "AGEOOME" )
+    for (Groupi in GROUPS){
+      Metadata %>% filter(Group == Groupi) -> group_meta
+      Abundance %>% filter(ID %in% group_meta$Sample) %>% select(Bacteria) %>% as_vector() -> Total_value
+      Total_value %>% mean() -> Total_mean
+      length(Total_value[Total_value == 0 ]) -> Total_na
+      Summary_bacteria = c(Summary_bacteria, Total_mean, Total_na)
+    }
+    NAMES = c("Total_abundance","Total_0s", "AGEFCTRL_abundance","AGEFCTRL_0s","AGEFOME_abundance","AGEFOME_0s","AGEOCTRL_abundance","AGEOCTRL_0s","AGEOOME_abundance","AGEOOME_0s") 
+    as.tibble(t(Summary_bacteria)) %>% mutate(Taxa =  Bacteria)  -> Summary_bacteria
+    colnames(Summary_bacteria) = c(NAMES, "Taxa")
+    select(Summary_bacteria, c("Taxa",NAMES)) -> Summary_bacteria
+    rbind(SUMMARY,Summary_bacteria) -> SUMMARY
+  }
+  write_tsv(SUMMARY, NAME_output)
+  
+}
+
 
 #####################
 #####################
+
+
+#1. Check data ASVs
+All_samples$ID = Abundance$ID
+Total_number = Preliminary_checks(All_samples, metadata)
+metadata %>% mutate(Reads = Total_number) -> metadata
+Comparisons = c("Fecal_Control-Fecal_Treat", "Fecal_Control-Oral_Control", "Fecal_Treat-Oral_Control", "Fecal_Control-Oral_Treat",  "Fecal_Treat-Oral_Treat", "Oral_Control-Oral_Treat")
+
+#2. Refraction, Ref: #https://microbiomejournal.biomedcentral.com/articles/10.1186/s40168-017-0237-y
+S <- specnumber(select(All_samples, -ID)) # observed number of species
+Srare <- rarefy(x=select(All_samples,-ID),MARGIN=1, sample=min(Total_number))
+plot(S, Srare, xlab = "Observed No. of Species", ylab = "Rarefied No. of Species")
+vegan::rrarefy(x=select(All_samples,-ID), sample=min(Total_number)) %>% as_tibble() %>% mutate(ID = Abundance$ID) -> Abundance_rarefy
+metadata %>% mutate(Reads = Total_number) -> metadata_rarefy
+
+#2.5 Generate summary
+Make_summary(Abundance = Abundance_rarefy,Metadata = metadata_rarefy,NAME_output = "Summary_ASVs.tsv")
+
+#3. Alpha and Beta diversity
+Alpha_diversity(Abundance_rarefy, metadata_rarefy) -> Fig_alpha_diversity
+Beta_diversity_unifract(Abundance_rarefy, metadata_rarefy, Tree ) -> Figu_weightedUnifrac
+
+# Transform the rarefied Abundance to genus
+Genuses = c()
+for (ASV in colnames(Abundance_rarefy)){
+  if (ASV == "Sample"){ next }
+  if (! grepl("_Genus", ASV)){ next}
+  Genus = str_split(ASV, "\\|")
+  Genus = Genus[[1]][length(Genus[[1]])-1]
+  print(Genus)
+  if (Genus %in% Genuses){ next }
+  Genuses = c(Genuses,Genus)
+}
+matrix(0L,nrow = dim(Abundance_rarefy)[1], ncol = length(Genuses),) -> Matrix_genus
+colnames(Matrix_genus) = Genuses
+for (ASV in colnames(Abundance_rarefy)){
+  if (ASV == "Sample"){ next }
+  ASV_count = as.vector(as_vector(select(Abundance_rarefy, ASV)))
+  if (! grepl("_Genus", ASV)){ next}
+  Genus = str_split(ASV, "\\|")
+  Genus = Genus[[1]][length(Genus[[1]])-1]
+  Matrix_genus[,Genus] = Matrix_genus[,Genus] + ASV_count
+}
+#Transform in relative abundances
+apply(Matrix_genus,1, FUN=function(x){ x/ sum(x)}) %>% t() -> Relative_genus
+Make_summary(mutate(as_tibble(Relative_genus), ID=Abundance_rarefy$ID),Metadata = metadata_rarefy,NAME_output = "Summary_Genus.tsv")
+
+#Filter on prevalence: 20%
+apply(Relative_genus, 2, FUN= function(x){ length(x[x>0]) > (0.2*length(x))  } ) -> Prevalent
+names(Prevalent[Prevalent == T]) -> Most_prevalent
+as_tibble(Relative_genus) %>% select(Most_prevalent) -> Relative_genus
+#Filter on abundance: > 0.1%
+Relative_genus %>% summarise_all(mean) %>% as_vector() -> Mean_abundance
+names(Mean_abundance[Mean_abundance > 0.001]) -> Abundance_filtered
+#New genus
+Relative_genus %>% select(Abundance_filtered) %>% mutate(ID = All_samples$ID) -> Abundance
+Abundance -> Abundance_rarefy
+#Non=parametric test
+apply(select(Abundance_rarefy, -ID), MARGIN = 2, FUN = function(x){ print(x);Test_groups(mutate(metadata_rarefy, Dependent=x))}) -> Model_outcome_rarefy
+Model_outcome_rarefy %>% t() %>%as_tibble() %>% mutate(Bug=colnames(Model_outcome_rarefy)) %>%   
+  `colnames<-`(c(Comparisons, "Bug")) %>% gather(Test, Pvalue, 1:length(Comparisons)) %>%
+  mutate(FDR = p.adjust(Pvalue, "fdr")) %>% filter(!is.na(FDR)) %>% arrange(FDR) -> Model_outcome_rarefy
+Model_outcome_rarefy %>% filter(Test == "Fecal_Control-Fecal_Treat" | Test == "Oral_Control-Oral_Treat") %>% arrange(Pvalue) %>%
+  mutate(BH_fdr = p.adjust(Pvalue,"fdr"))
+
+Model_outcome_rarefy %>% filter(Test == "Fecal_Control-Fecal_Treat") -> Fecal
+Model_outcome_rarefy %>% filter(Test == "Oral_Control-Oral_Treat") -> Oral
+left_join(Fecal, Oral, by=c("Bug"), suffix = c("Fecal", "Oral"))
+
+
+#Permutations based FDR
+Model_outcome_rarefy %>% filter(Test == "Fecal_Control-Fecal_Treat" ) %>% arrange(desc(Pvalue)) -> Input_fdr_fecal
+FDR_correction(Abundance_rarefy,Input_fdr_fecal, metadata_rarefy,c("AGEFCTRL","AGEFOME"),Permutations = 100) -> FDR_permuted
+Input_fdr_fecal %>% mutate(FDR_permuted = FDR_permuted) -> Fecal_effect
+
+Model_outcome_rarefy %>% filter(Test == "Oral_Control-Oral_Treat" ) %>% arrange(desc(Pvalue)) -> Input_fdr_oral
+FDR_correction(Abundance_rarefy,Input_fdr_oral, metadata_rarefy,c("AGEOCTRL","AGEOOME"),Permutations = 100) -> FDR_permuted
+Input_fdr_oral %>% mutate(FDR_permuted = FDR_permuted) -> Oral_effect
+
+
+
+
+
+
+
+
+
+
+
+
+####Prev
+
 
 Genus = colnames(Abundance)[grepl(".Genus",colnames(Abundance))]
 Abundance %>% select(c("ID", Genus)) -> Abundance
@@ -552,6 +717,9 @@ Total_number = Preliminary_checks(Abundance, metadata)
 metadata %>% mutate(Reads = Total_number) -> metadata
 
 Comparisons = c("Fecal_Control-Fecal_Treat", "Fecal_Control-Oral_Control", "Fecal_Treat-Oral_Control", "Fecal_Control-Oral_Treat",  "Fecal_Treat-Oral_Treat", "Oral_Control-Oral_Treat")
+Beta_diversity_unifract(Abundance_rarefy, metadata_rarefy, Tree)
+
+
 
 
 
@@ -594,6 +762,8 @@ rarecurve(select(Abundance, -ID), step = 10, min(Total_number), xlab = "Sample S
           label = TRUE) -> rare_curve
 ggsave(rare_curve, "Figures/Rarecurve.pdf")
 
+
+#https://microbiomejournal.biomedcentral.com/articles/10.1186/s40168-017-0237-y
 ##Perform rarefy
 vegan::rrarefy(x=select(Abundance,-ID), sample=min(Total_number)) %>% as_tibble() %>% mutate(ID = Abundance$ID) -> Abundance_rarefy
 #Srare <- specnumber(select(Abundance_rarefy, -ID))
@@ -615,13 +785,30 @@ write_csv(ancom_results, "Results/Model_rarefy_ancom.csv")
 ancom_results  %>% arrange(desc(W)) %>% ggplot(aes(x=Groups, y=W)) + geom_boxplot(outlier.shape = NA
 )+ geom_jitter(aes(col=detected_0.7==T)) +theme_bw()+ coord_flip() #theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
-
+Number_0s = function(x){
+  length(x[is.na(x)])
+}
+apply(select(Abundance_rarefy, -ID),1, FUN=sum) -> Total_counts
+apply(select(Abundance_rarefy, -ID),2, FUN=function(x){x/Total_counts }) %>% as_tibble()
+(select(Abundance_rarefy, -ID)/Total_counts) %>% as_tibble() %>% summarise_all(sum)
+metadata_rarefy %>% mutate(ID =Sample) %>% select(-c(Sample,Reads)) %>% left_join(Abundance_rarefy) -> Input_summary
+for (I in colnames(select(Abundance_rarefy, -ID))){
+  Input_summary %>% select(one_of(colnames(metadata_rarefy), I)) -> Input_summary2 
+  Input_summary2 %>% select(I) %>% as_vector() %>% as.vector() -> Values
+  Input_summary2 %>% select(-c(Origin, Treatment)) %>% group_by(Group) %>% summarise(Mean = mean())
+  
+  Out = tibble(Bug= I, Mean_abundance = mean(Values), Missing_values= sum(is.na(Values)), N = length(Values), Mean_gut =   )
+}
+  group_by(Origin,Treatment) %>% 
+  summarise_if(is.numeric,sd )
 
 apply(select(Abundance_rarefy, -ID), MARGIN = 2, FUN = function(x){ print(x);Test_groups(mutate(metadata_rarefy, Dependent=x))}) -> Model_outcome_rarefy
 Model_outcome_rarefy %>% t() %>%as_tibble() %>% mutate(Bug=colnames(Model_outcome_rarefy)) %>%   
   `colnames<-`(c(Comparisons, "Bug")) %>% gather(Test, Pvalue, 1:length(Comparisons)) %>%
   mutate(FDR = p.adjust(Pvalue, "fdr")) %>% filter(!is.na(FDR)) %>% arrange(FDR) -> Model_outcome_rarefy
 write_csv(Model_outcome_rarefy, "Results/Model_rarefy.csv")
+Model_outcome_rarefy %>% filter(Test == "Fecal_Control-Fecal_Treat" | Test == "Oral_Control-Oral_Treat") %>% 
+  mutate(FDR= p.adjust(Pvalue,method="fdr")) %>% arrange(Pvalue)
 
 
 Model_outcome_rarefy  %>% ggplot(aes(x=Test, y=-log10(Pvalue))) + geom_boxplot(outlier.shape = NA
