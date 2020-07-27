@@ -59,8 +59,8 @@ Linear_regression = function(Dependent, Regressor, Covariates, Regressor_name, D
   Dependent = Rank_norm(Dependent)
   Covariates %>% mutate(Regressor = Regressor, Dependent = Dependent) -> Model_variables
   if (BMI == T){
-    Model = lm(Dependent ~ Regressor + Age + BMI + Gender, Model_variables)
-  } else{ Model = lm(Dependent ~ Regressor + Age + Gender, Model_variables) }
+    Model = lm(Dependent ~ Regressor + Age + BMI + Gender + Creatinine, Model_variables)
+  } else{ Model = lm(Dependent ~ Regressor + Age + Gender + Creatinine, Model_variables) }
   Summary = as_tibble(summary(Model)$coefficients)
   Beta = Summary$Estimate[2]
   pvalue = Summary$`Pr(>|t|)`[2]
@@ -600,17 +600,16 @@ Filter_abundance = function(M,M2, threshold=0.2, min_abundance = 0){
   #Filter species not seen in at least treshold*100% of samples
   apply(select(M, -ID), MARGIN=2, FUN = function(x){ (sum(x != 0)/length(x)) >= min_abundance }) -> Filter_vector1
   apply(select(M2, -ID), MARGIN=2, FUN = function(x){ (sum(x != 0)/length(x)) >= min_abundance }) -> Filter_vector2
-  Filter_vector = unique(c(Filter_vector1, Filter_vector2))
-  
-  F_names = colnames(select(M, -ID))[!Filter_vector]
-  M %>% select(! F_names) -> M
-  M2 %>% select(! F_names) -> M2
+  Filter_vector = c(unique(c(names(Filter_vector1), names(Filter_vector2))), "ID")
+    
+  M %>% select(one_of(Filter_vector)) -> M
+  M2 %>% select(one_of(Filter_vector)) -> M2
   
   #Filter species with mean relative abundance lower than min_abundance
   apply(select(M, -ID), MARGIN=1, FUN = function(x){ sum(x) }) -> Total_reads_sample ; apply(select(M2, -ID), MARGIN=1, FUN = function(x){ sum(x) }) -> Total_reads_sample2
-  as_tibble(select(M, -ID)/Total_reads_sample) %>% summarise_all(mean) -> All_means ; as_tibble(select(M2, -ID)/Total_reads_sample) %>% summarise_all(mean) -> All_means2
+  as_tibble(select(M, -ID)/Total_reads_sample) %>% summarise_all(mean) -> All_means ; as_tibble(select(M2, -ID)/Total_reads_sample2) %>% summarise_all(mean) -> All_means2
   colnames(select(M, -ID))[as_vector(All_means) > min_abundance] -> Taxa_not_to_filter ; colnames(select(M2, -ID))[as_vector(All_means) > min_abundance] -> Taxa_not_to_filter2
-  M %>% select(c(ID, Taxa_not_to_filter)) -> M ; M2 %>% select(c(ID, Taxa_not_to_filter)) -> M2
+  M %>% select(c(ID, Taxa_not_to_filter)) -> M ; M2 %>% select(c(ID, Taxa_not_to_filter2)) -> M2
   
   
   return(list(M,M2))
