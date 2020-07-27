@@ -5,8 +5,8 @@ library(vegan) # Used in Diversity_analysis
 library(ggforce)
 library(ape) #Used in Diversity_analysis
 library(ggtree) #Used in Diversity_analysis
-library(cluster) #Used in Diversity_analysis
-library(gamlss) #Used in fit_bezi
+#library(cluster) #Used in Diversity_analysis
+#library(gamlss) #Used in fit_bezi
 library(dunn.test)
 select = dplyr::select
 
@@ -294,11 +294,28 @@ Diversity_analysis = function(taxa_matrix,metadata){
   metadata %>% filter(Source=="saliva") -> meta_saliva
   taxa_matrix %>% filter(ID %in% meta_saliva$StudieID) -> saliva_matrix
   taxa_matrix %>% filter(ID %in% meta_pocket$StudieID) -> pocket_matrix
-  saliva_dist <- vegdist(saliva_matrix[,2:dim(saliva_matrix)[2]],  method = "bray")
-  pocket_dist <- vegdist(pocket_matrix[,2:dim(pocket_matrix)[2]],  method = "bray")
-  
-  permanova_2_saliva = adonis2(saliva_dist~ n_reads + factor(Group) ,data=meta_saliva, permutations = 2000, method="bray")
-  permanova_2_pocket = adonis2(pocket_dist~ n_reads + factor(Group) ,data=meta_pocket, permutations = 2000, method="bray")
+
+  Results_total = tibble()
+  for (Explanatory in c("Group","Periodontium (SUVmax)", "Periodontium (SUVmean)","IL-1Ra (pg/mL)" ,"IL-6 (pg/mL)" ,"hsCRP (ug/mL)" ,"WBC (10^6/mL)")){
+    meta_saliva %>% select(Explanatory) %>% as_vector() -> Expl
+    meta_saliva %>% mutate(Regressor = Expl) -> meta_saliva
+    meta_pocket %>% select(Explanatory) %>% as_vector() -> Expl
+    meta_pocket %>% mutate(Regressor = Expl) -> meta_pocket
+    
+    meta_pocket %>% drop_na(Explanatory) -> exp_pocket
+    meta_saliva %>% drop_na(Explanatory) -> exp_saliva
+    saliva_matrix %>% filter(ID %in% exp_saliva$StudieID) %>% select(-ID) -> SM
+    pocket_matrix %>% filter(ID %in% exp_pocket$StudieID) %>% select(-ID) -> SP
+    saliva_dist <- vegdist(SM,  method = "bray")
+    pocket_dist <- vegdist(SP,  method = "bray")
+    
+    permanova_2_saliva = adonis2(saliva_dist~ n_reads + Regressor ,data=exp_saliva, permutations = 2000, method="bray")
+    permanova_2_pocket = adonis2(pocket_dist~ n_reads + Regressor ,data=exp_pocket, permutations = 2000, method="bray")
+
+    Results_pheno = tibble(R2 = permanova_2_saliva$R2[2], Pvalue = permanova_2_saliva$`Pr(>F)`[2], Tissue = "saliva", Pheno=Explanatory)
+    rbind(Results_pheno, tibble(R2 = permanova_2_pocket$R2[2], Pvalue = permanova_2_pocket$`Pr(>F)`[2], Tissue = "pocket", Pheno=Explanatory)) -> Results_pheno
+    rbind(Results_total,Results_pheno) -> Results_total
+  }
   print("Total permanova")
   print(permanova_1)
   print("In saliva permanova")
@@ -307,7 +324,7 @@ Diversity_analysis = function(taxa_matrix,metadata){
   print(permanova_2_pocket)
   ###########
   
-  return(list(Cluster_plot, Fig_alpha, Fig_Scree_plot, Fig_PCoA1))
+  return(list(Cluster_plot, Fig_alpha, Fig_Scree_plot, Fig_PCoA1,Results_total))
   
 }
 
