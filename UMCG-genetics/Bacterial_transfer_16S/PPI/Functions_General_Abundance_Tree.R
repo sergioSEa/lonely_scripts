@@ -2,7 +2,7 @@
 #Differential abundance
 #Tree
 
-setwd("~/Resilio Sync/Transfer/Collaborations/Debby/PPI")
+setwd("~/../Resilio Sync/Transfer/Collaborations/Debby/PPI")
 #General and visualization
 library(tidyverse)
 library(pheatmap)
@@ -128,17 +128,84 @@ Beta_diversity_unifract = function(M=All_samples, metadata=metadata, Tree=Tree){
   phyloseq::merge_phyloseq(phylobjetc,Tree, sample_data(sampledata)) -> phylobjetc
   phylobjetc -> phylobject_norm
 
-  ordi_1 = ordinate(phylobject_norm, method = "PCoA", distance="unifrac", weighted=T)
-  
+  #ordi_1 = ordinate(phylobject_norm, method = "PCoA", distance="unifrac", weighted=T)
+  ordi_1 = ordinate(phylobject_norm, method = "NMDS", distance="unifrac", weighted=T)
  
   plot_ordination(phylobject_norm, ordi_1, color="Treatment", shape="Origin") + theme_bw() + 
   scale_color_manual(name = "Treatment Group", labels = c("Control", "Omeprazole"),values=cbp2)  -> Weighted_unifract_PCoA_rare
   print(Weighted_unifract_PCoA_rare)
   
   meta <- as(sample_data(phylobject_norm), "data.frame")
+  if (length(unique(meta$Origin)) == 2){
   adonis(distance(phylobject_norm, method="unifrac", weighted=T) ~ Origin * Treatment,
-         data = meta)
+         data = meta) -> Res #Cannot use starata because Treatment does not change within the same mice.
+  }else{
+    adonis(distance(phylobject_norm, method="unifrac", weighted=T) ~ Treatment,
+           data = meta) -> Res #Cannot use starata because Treatment does not change within the same mice.
+    Intra_group_Beta(phylobject_norm)
+  }
+    
+  print(Res)
+  
+  
   return(Weighted_unifract_PCoA_rare)
+}
+
+divergence2 <- function(x, y, method="bray") {
+  # Abundance matrix (taxa x samples)
+  M = tax_table(x)
+  Tree_group = phy_tree(x)
+  x <- abundances(x)
+  y <- as.vector(y)
+  
+  
+  # Divergence against the reference
+  b <- c()
+  for (i in seq_len(ncol(x))) {
+    xx <- rbind(x[, i], y)
+    rbind(xx, sample(1:20,dim(xx)[1] , replace=FALSE)) -> xx
+    rbind(xx, sample(1:20,dim(xx)[1] , replace=FALSE)) -> xx
+    rbind(xx, sample(1:20,dim(xx)[1] , replace=FALSE)) -> xx
+    rbind(xx, sample(1:20,dim(xx)[1] , replace=FALSE)) -> xx
+    rbind(xx, sample(1:20,dim(xx)[1] , replace=FALSE)) -> xx
+    rbind(xx, sample(1:20,dim(xx)[1] , replace=FALSE)) -> xx
+    rbind(xx, sample(1:20,dim(xx)[1] , replace=FALSE)) -> xx
+    rbind(xx, sample(1:20,dim(xx)[1] , replace=FALSE)) -> xx
+    
+    OTUs = otu_table(t(xx), taxa_are_rows = TRUE)
+    tax_table(M) -> M 
+    phyloseq::phyloseq(OTUs, M) -> plo
+    keep.tip(phy = Tree_group, tip = rownames(M))
+    phyloseq::merge_phyloseq(plo,Tree_group) -> plo
+    set.seed(99)
+    print(plo)
+    return(plo)
+    xxx <- phyloseq::distance(plo, method="unifrac", weighted=T)
+    b[[i]] <- as.matrix(xxx)[1, 2]
+  }
+  # Add sample names
+  names(b) <- colnames(x)
+  
+  unlist(b)
+}
+Intra_group_Beta = function(pseq){
+  b.pla <- microbiome::divergence(subset_samples(pseq, Treatment == 0),
+                      apply(abundances(subset_samples(pseq, Treatment == 0 )), 1, median), method= "bray")
+  
+  b.lgg <- microbiome::divergence(subset_samples(pseq, Treatment == 1),
+                      apply(abundances(subset_samples(pseq, Treatment == 1)), 1, median), method="bray")
+  library(reshape2)
+  l<- list(b.pla, b.lgg)
+  df<- melt(l)
+  df$L1[df$L1 == '1']<- 'Control'
+  df$L1[df$L1 == '2']<- 'Omeo'
+  
+  df$L1<- factor(df$L1, levels = c('Control','Omeo'))
+  
+  p<- ggplot(df, aes(x = L1, y = value)) + geom_boxplot()+ geom_point()+ xlab('') + theme_bw()
+  print(p)
+  wilcox.test(as.formula("value ~L1"), df)
+
 }
 
 Transformation_composition = function(Count_table){
@@ -618,6 +685,14 @@ Make_summary = function(Abundance=Abundance_rarefy, Metadata=metadata_rarefy, NA
 #####################
 #####################
 
+Mice = sapply(str_split(metadata$Sample, "F|O"), FUN= function(x){ return(x)[2]})
+Mice = Mice[2,]
+Gr = sapply(str_split(metadata$Group, "AGEF|AGEO"), FUN= function(x){ return(x)[2]})
+Gr = Gr[2,]
+
+metadata %>% mutate(Mice=Mice, Gr = Gr) -> metadata
+
+
 
 #1. Check data ASVs
 All_samples$ID = Abundance$ID
@@ -636,8 +711,16 @@ metadata %>% mutate(Reads = Total_number) -> metadata_rarefy
 Make_summary(Abundance = Abundance_rarefy,Metadata = metadata_rarefy,NAME_output = "Summary_ASVs.tsv")
 
 #3. Alpha and Beta diversity
+set.seed(2608)
 Alpha_diversity(Abundance_rarefy, metadata_rarefy) -> Fig_alpha_diversity
 Beta_diversity_unifract(Abundance_rarefy, metadata_rarefy, Tree ) -> Figu_weightedUnifrac
+
+metadata_rarefy %>% filter(Origin == "Gut") -> gut_meta
+Beta_diversity_unifract(filter(Abundance_rarefy, ID %in% gut_meta$Sample), gut_meta, Tree )
+metadata_rarefy %>% filter(Origin == "Oral") -> oral_meta
+Beta_diversity_unifract(filter(Abundance_rarefy, ID %in% oral_meta$Sample), oral_meta, Tree )
+
+
 
 # Transform the rarefied Abundance to genus
 Genuses = c()
@@ -698,6 +781,206 @@ Input_fdr_oral %>% mutate(FDR_permuted = FDR_permuted) -> Oral_effect
 
 
 
+
+
+
+#21/08 Johannes ideas
+
+
+Mice = sapply(str_split(metadata$Sample, "F|O"), FUN= function(x){ return(x)[2]})
+Mice = Mice[2,]
+Gr = sapply(str_split(metadata$Group, "AGEF|AGEO"), FUN= function(x){ return(x)[2]})
+Gr = Gr[2,]
+
+metadata %>% mutate(Mice=Mice, Gr = Gr) -> metadata
+
+#Percentage of shared ASV
+Shared_results = tibble()
+for (mice in unique(metadata$Mice)){
+  metadata %>% filter(Mice == mice) %>% select(Sample) %>% as_vector() -> Mice_anal
+  metadata %>% filter(Mice == mice) %>% select(Gr) %>% as_vector() %>% unique() -> Mice_group
+  All_samples %>% filter(ID %in% Mice_anal) %>% t() %>% as.data.frame() -> Mice_bacteria
+  Names = as.vector(as_vector(Mice_bacteria["ID",]))
+  Mice_bacteria[2: dim(Mice_bacteria)[1],] -> Mice_bacteria2
+  apply(Mice_bacteria2,2, as.numeric) %>% as.data.frame() -> Mice_bacteria3
+  rownames(Mice_bacteria3)= rownames(Mice_bacteria2)
+  
+  Mice_bacteria3[1] -> Microbiome_fecal
+  rownames(Microbiome_fecal)[!Microbiome_fecal[1]$V1==0] -> Microbiome_fecal_b
+  
+  Mice_bacteria3[2] -> Microbiome_oral
+  rownames(Microbiome_oral)[!Microbiome_oral[1]$V2==0] -> Microbiome_oral_b
+  
+  setdiff(Microbiome_fecal_b,Microbiome_oral_b) -> Different
+  c(setdiff(Microbiome_oral_b,Microbiome_fecal_b),Different) -> Different
+  intersect(Microbiome_fecal_b,Microbiome_oral_b) -> Common
+  Shared = 100 * (length(Common)/(length(Different) + length(Common)))
+  
+  Shared_results = rbind(Shared_results, tibble(Mouse=mice, Group=Mice_group, ASV_shared = Shared))
+}
+
+Shared_results %>% ggplot(aes(x=Group, y = ASV_shared))  + geom_boxplot() +geom_point() + theme_bw()
+wilcox.test(filter(Shared_results, Group == "CTRL")$ASV_shared,filter(Shared_results, Group == "OME")$ASV_shared, conf.int=T)
+
+#Neutral model of transmission: https://www.nature.com/articles/ismej2015142
+#library("MicEco")
+#All_samples %>% filter(ID %in% Oral_control)
+#phyloseq::otu_table(Sink_common,taxa_are_rows = F) -> OTU_table
+#neutral.fit(OTU_table)
+
+library("reltools")
+library(minpack.lm)
+library(Hmisc)
+library(stats4)
+require("tyRa")
+
+FIT_NEUTRAL = function(Oral_control, Fecal_contol, Ab_r=Abundance_rarefy ){
+  #Transformation_composition(Abundance_rarefy) -> Ab_r
+  Ab_r %>% filter(ID %in% Oral_control$Sample) -> Source
+  Source %>% select(-ID) %>% summarise_all(sum) %>% gather(ASV, Abundance, 1:(dim(Source)[2]-1), factor_key=TRUE) %>% filter(Abundance==0) -> To_filter
+  
+  Ab_r %>% filter(ID %in% Fecal_control$Sample) -> Sink
+  Sink %>% select(! one_of(To_filter$ASV)) %>% select(-ID)  -> Sink_common
+  Source %>% select(! one_of(To_filter$ASV)) %>% select(-ID)  -> Source_common
+  
+  #reltools::fit_sncm(phyloseq::otu_table(Sink_common,taxa_are_rows = F), pool=phyloseq::otu_table(Source_common,taxa_are_rows = F)) -> TAble
+  tyRa::fit_sncm(spp = Sink_common, pool = Source_common) -> OUT_model
+  TAble = as.data.frame(OUT_model[[2]])
+  TAble %>% rownames_to_column() %>% as_tibble() -> Fit_results
+  
+  tmp_abu <- colMeans(Sink_common) %>% as.data.frame() %>% rownames_to_column() %>% as_tibble()
+  left_join(Fit_results,tmp_abu) -> Fit_results
+  
+  plot_sncm_fit(OUT_model, fill = NULL, title = "Model Fit") + theme_bw() -> PLOT
+  
+  
+  return(list(Fit_results, PLOT))
+  
+}
+
+set.seed(99)
+#In Control
+metadata %>% filter(Group == "AGEOCTRL") -> Oral_control
+metadata %>% filter(Group == "AGEFCTRL") -> Fecal_control
+FIT_NEUTRAL(Oral_control, Fecal_control) -> Model_control
+PLOT_control = Model_control[[2]]
+Model_control = Model_control[[1]]
+Model_control %>% group_by(fit_class) %>% summarise(n())
+2021/(239+172)
+##In treated
+metadata %>% filter(Group == "AGEOOME") -> Oral_control
+metadata %>% filter(Group == "AGEFOME") -> Fecal_control
+FIT_NEUTRAL(Oral_control, Fecal_control) -> Model_treated
+PLOT_treated = Model_treated[[2]]
+Model_treated =  Model_treated[[1]]
+
+Model_treated %>% group_by(fit_class) %>% summarise(n())
+1365/(198+85)
+#As predicted, Above, below
+data.frame(Control=c(2021, 239, 172), Treated=c(1365, 198,85)) %>% t() -> Table_prop
+fisher.test(Table_prop)
+res_as <- prop.test(x = c(2021, 1365), n = c(2432, 1648))
+res_above <- prop.test(x = c(239, 198), n = c(2432, 1648))
+res_below <- prop.test(x = c(172, 85), n = c(2432, 1648))
+
+#Treatment increases the number of predictes under neutrality and the number of above neutrality
+
+#Which taxa are different
+Model_control %>% select(rowname, fit_class) -> merge_control
+Model_treated %>% select(rowname, fit_class) -> merge_PPI
+left_join(merge_control, merge_PPI, by="rowname") %>% drop_na() %>% mutate(Concordance = (fit_class.x == fit_class.y)) %>% filter(Concordance == F) -> Not_corcondant
+Not_corcondant %>% filter(fit_class.y == "Above prediction") -> Not_corcondant
+#Enrichment analysis using those taxa
+All_samples %>% select(c("ID", Not_corcondant$rowname)) -> Samples_notconcordant
+Shared_results = tibble()
+for (mice in unique(metadata$Mice)){
+  metadata %>% filter(Mice == mice) %>% select(Sample) %>% as_vector() -> Mice_anal
+  metadata %>% filter(Mice == mice) %>% select(Gr) %>% as_vector() %>% unique() -> Mice_group
+  Samples_notconcordant %>% filter(ID %in% Mice_anal) %>% t() %>% as.data.frame() -> Mice_bacteria
+  Names = as.vector(as_vector(Mice_bacteria["ID",]))
+  Mice_bacteria[2: dim(Mice_bacteria)[1],] -> Mice_bacteria2
+  apply(Mice_bacteria2,2, as.numeric) %>% as.data.frame() -> Mice_bacteria3
+  rownames(Mice_bacteria3)= rownames(Mice_bacteria2)
+  
+  Mice_bacteria3[1] -> Microbiome_fecal
+  rownames(Microbiome_fecal)[!Microbiome_fecal[1]$V1==0] -> Microbiome_fecal_b
+  
+  Mice_bacteria3[2] -> Microbiome_oral
+  rownames(Microbiome_oral)[!Microbiome_oral[1]$V2==0] -> Microbiome_oral_b
+  
+  setdiff(Microbiome_fecal_b,Microbiome_oral_b) -> Different
+  c(setdiff(Microbiome_oral_b,Microbiome_fecal_b),Different) -> Different
+  intersect(Microbiome_fecal_b,Microbiome_oral_b) -> Common
+  Shared = 100 * (length(Common)/(length(Different)+length(Common)) )
+  
+  Shared_results = rbind(Shared_results, tibble(Mouse=mice, Group=Mice_group, ASV_shared = Shared))
+}
+
+Shared_results %>% ggplot(aes(x=Group, y = ASV_shared))  + geom_boxplot() +geom_point() + theme_bw()
+wilcox.test(filter(Shared_results, Group == "CTRL")$ASV_shared,filter(Shared_results, Group == "OME")$ASV_shared, conf.int=T)
+#Abundance
+apply(select(Samples_notconcordant, -ID), MARGIN = 2, FUN = function(x){ print(x);Test_groups(mutate(metadata_rarefy, Dependent=x))}) -> Model_outcome_rarefy_sub
+Model_outcome_rarefy_sub %>% t() %>%as_tibble() %>% mutate(Bug=colnames(Model_outcome_rarefy_sub)) %>%   
+  `colnames<-`(c(Comparisons, "Bug")) %>% gather(Test, Pvalue, 1:length(Comparisons)) %>%
+  mutate(FDR = p.adjust(Pvalue, "fdr")) %>% filter(!is.na(FDR)) %>% arrange(FDR) -> Model_outcome_rarefy
+
+Model_outcome_rarefy %>% ggplot(aes(x=Test, y = -log10(Pvalue))) + geom_boxplot() +  geom_point(aes(col=FDR<0.05)) + 
+  coord_flip() + theme_bw()
+
+Model_outcome_rarefy %>% filter(Test == "Fecal_Control-Fecal_Treat" | Test == "Oral_Control-Oral_Treat") %>% arrange(Pvalue) %>%
+  mutate(BH_fdr = p.adjust(Pvalue,"fdr")) %>% ggplot(aes(x=Test, y = -log10(Pvalue))) + geom_boxplot() +  geom_point(aes(col=Pvalue<0.05)) + 
+  coord_flip() + theme_bw()
+
+
+
+
+#Calculate R2
+R2_calc = function(Real,pred){
+  rss = sum((pred - Real)^2)
+  tss = sum((Real - mean(Real))^2)
+  rsq = 1 - rss/tss
+  return(rsq)
+}
+R2_calc(Model_control$freq,Model_control$freq.pred)
+R2_calc(Model_treated$freq,Model_treated$freq.pred)
+
+
+rbind(mutate(Model_control, Group = "Control"), mutate(Model_treated, Group="Omeoplazol")) %>% group_by() %>%
+  group_by(fit_class,Group) %>% summarise(Number_taxa=n()) %>% ggplot(aes(x=Group,y=Number_taxa,fill=fit_class)) + geom_bar(stat="identity") + theme_bw()
+
+rbind(mutate(Model_control, Group = "Control"), mutate(Model_treated, Group="Omeoplazol")) %>%
+  ggplot() + geom_point(aes(x=log(.), y=freq, col=fit_class)) + theme_bw() + facet_wrap(~Group) +
+  xlab("log10 of relative abundance")
+
+
+left_join(Model_control, Model_treated, by="rowname") %>% drop_na() -> Predictions
+wilcox.test(Predictions$freq.pred.x, Predictions$freq.pred.y, conf.int = T)
+Predictions %>% ggplot(aes(x= as.numeric(freq.pred.x), y=as.numeric(freq.pred.y))) + geom_point() + theme_bw() + abline(intercept=0, slope=1)
+Predictions %>% gather(Data, FREQ, c(freq.pred.x,freq.pred.y)) %>% ggplot(aes(x=Data,y=FREQ)) + geom_boxplot()+ ggforce::geom_sina() + theme_bw() 
+
+tmp_abu <- colMeans(Sink_common) %>% as.data.frame() %>% rownames_to_column() %>% as_tibble()
+left_join(Fit_results,tmp_abu) -> Fit_results
+quantile(Fit_results$freq.pred, seq(0,1,0.1))
+Fit_results %>% ggplot() + geom_point(aes(x=log(.), y=freq, col=fit_class)) + geom_line(aes(y=freq.pred,x=log(.))) + theme_bw() +
+  geom_line(aes(y=pred.lwr,x=log(.)),linetype = "dashed") + geom_line(aes(y=pred.upr,x=log(.)),linetype = "dashed")
+
+
+
+
+Fit_results %>% as.data.frame() %>% column_to_rownames(.) -> Predictions
+
+#Fit_results$freq.pred -> Predictions
+names(Predictions) = Fit_results$rowname
+zoo::rollapply(select(Predictions,freq.pred, pred.lwr, pred.upr, .),by.column=T, width = round(length(Fit_results$freq.pred)/10), by = round(length(Fit_results$freq.pred)/100), FUN = mean, align = "left") -> Smooth_line
+#zoo::rollapply(select(Predictions,.),by.column=T, width = 1, by = round(length(Fit_results$freq.pred)/20), FUN = identity, align = "left") -> Smooth_line_values
+#as_tibble(Smooth_line) %>% mutate(Value = as.vector(Smooth_line_values)[1:dim(Smooth_line)[1]]) -> Smooth_line
+Smooth_line %>% mutate()
+Fit_results %>% ggplot() + geom_point(aes(x=log(.), y=freq, col=fit_class)) + geom_line(data=as_tibble(Smooth_line), aes(x=log(.), y=freq.pred))
+
+
+
+##############
+#############
 
 
 
@@ -886,3 +1169,8 @@ sapply(Transfered$Genus_name, FUN = function(x){ Make_tree_genus2(Tree, x, All_s
 
 
 Result_tranfer_total %>% filter(Genus_name == "Corynebacterium")
+
+
+
+
+
