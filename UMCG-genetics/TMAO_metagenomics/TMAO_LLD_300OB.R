@@ -1,6 +1,6 @@
 #TMAO correlation with microbiome
 
-setwd("~/Documents/PhD/TMAO_project/MSS/")
+setwd("~/../Resilio Sync/Transfer/PhD/TMAO_project/MSS/")
 library(tidyverse) #Data handling
 library(microbiome) #cdr transformation source("Microbiome_function.R")
 library(reshape2)
@@ -41,7 +41,7 @@ Family_abundance = read_tsv("Data/LLD/data_LLD_baseline_1135samples_698family.tx
 Phylum_abundance = read_tsv("Data/LLD/data_LLD_baseline_1135samples_698phylum.txt")
 
 #Gene abundance
-Gene_abundance = read_tsv(file = "Data/LLD/Gene_abundance")
+#Gene_abundance = read_tsv(file = "Data/LLD/Gene_abundance")
 #Cluster_abundance = read_tsv(file = "Data/LLD/Total_table_cutC_shortbred.tsv")
 Gene_family_abundance = read_tsv("Data/LLD/data_LLD_baseline_1135samples_489pathway.txt")
 
@@ -70,7 +70,9 @@ Phenotypes_300O = read_tsv("Data/300OB/300OB_phenotypes.txt")
 Covariates_300O = select(Phenotypes_300O, c("ID", "Age", "Gender","BMI"))
 Covariates_300O %>% mutate(Gender = Gender-1) -> Covariates_300O
 
-CutC_300OB = read_tsv("Data/300OB/Total_table_cutC_300OB.tsv")
+#cutC_300OB = read_tsv("Data/300OB/Total_table_cutC_300OB.tsv")
+#Gene abundance
+Gene_abundance_300OB = read_tsv(file = "Data/300OB/Total_table_TMAO_markers_300OB.tsv")
 
 
 BGC_300OB = read_tsv("Data/300OB/RPKM_BiG-MAP_300OB.tsv")
@@ -296,7 +298,7 @@ dim(Input_MGS[[3]]) ; dim(Input_MGS_300OB[[3]])
 Results_MGS = Iterate_Metabolites(Input_MGS[[1]],Input_MGS[[2]], Input_MGS[[3]], "MGS_species",BMI = T, Correct = "BH")
 #Results_MGS_noBMI = Iterate_Metabolites(Input_MGS[[1]],Input_MGS[[2]],Input_MGS[[3]], "MGS_species", BMI = F)
 
-Results_MGS  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue), col = FDR<0.15)) +
+Results_MGS  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue), col = FDR<0.05)) +
   facet_wrap(~Metabolite, scales="free") + theme_bw() +theme(axis.text.x = element_text(angle = 90, hjust = 1)) -> Fig_MGS_genus
 
 #300OB species associations
@@ -305,9 +307,16 @@ Results_MGS_300OB  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pv
   facet_wrap(~Metabolite, scales="free") + theme_bw() +theme(axis.text.x = element_text(angle = 90, hjust = 1)) -> Fig_MGS_genus
 
 
-full_join(Results_MGS,  Results_MGS_300OB, by= c("Regressor", "Metabolite"), suffix = c("LLD","300OB")) -> Combined_species
-write_csv(x = Combined_species, path = "Summary_statistics_species.csv")
 
+full_join(Results_MGS,  Results_MGS_300OB, by= c("Regressor", "Metabolite"), suffix = c("LLD","300OB")) -> Combined_species
+
+Combined_species %>% mutate(Significance = ifelse(Pvalue300OB < 0.05 & PvalueLLD < 0.05, "both", ifelse(Pvalue300OB< 0.05 & PvalueLLD > 0.05, "300OB", ifelse(Pvalue300OB> 0.05 & PvalueLLD < 0.05, "LLD", "None" ))))  %>%
+  ggplot(aes( x = log10(as.numeric(BetaLLD)), y= log10(as.numeric(Beta300OB)), col = Significance)) + geom_point() +  theme_bw() + facet_wrap(~Metabolite)
+Combined_species %>% mutate(Concordance = sign(as.numeric(BetaLLD)) == sign(as.numeric(Beta300OB))) %>%
+  ggplot(aes( x = -log10(as.numeric(PvalueLLD)), y= -log10(as.numeric(Pvalue300OB)), col = Concordance)) + geom_point() +  theme_bw() + facet_wrap(~Metabolite) + 
+  geom_vline(xintercept = -log10(0.05)) + geom_hline(yintercept = -log10(0.05))
+
+write_csv(x = Combined_species, path = "Summary_statistics_species.csv")
 
 ##Metanalysis
 Metanalyze = function(Combined_species){
@@ -379,11 +388,11 @@ Get_BGC_ready =  function(BGC){
 
 #LLD
 BGC_LLD = Get_BGC_ready(BGC_LLD)
-BGC_LLD_coverage = Get_BGC_ready(BGC_LLD_coverage)
+#BGC_LLD_coverage = Get_BGC_ready(BGC_LLD_coverage)
 Match_dataset(Dependent_metabolites, Covariates, BGC_LLD) -> BGC_match_LLD
 #300OB
 BGC_300OB = Get_BGC_ready(BGC_300OB)
-BGC_300OB_coverage = Get_BGC_ready(BGC_300OB_coverage)
+#BGC_300OB_coverage = Get_BGC_ready(BGC_300OB_coverage)
 Match_dataset(Dependent_metabolites_300O, Covariates_300O, BGC_300OB) -> BGC_match_300OB
 
 
@@ -397,15 +406,28 @@ Filtering_Median_n_abundance = function(DF, Norm="clr"){
     return(names(C)[1])  
   }else{ return(NA)
   }
-}  
+  } 
+  #Filter on prevalence
   apply(select(DF, -ID), 2, FUN=Above_thresh) -> Keep
   Keep[!is.na(Keep)] -> Keep
   DF %>% select(c("ID", names(Keep))) -> Filtered
+  
+  #filter on BGC coverage
+  
+  apply(select(BGC_300OB_coverage, -gene_clusters), 1, mean) -> Mean_300OB
+  apply(select(BGC_LLD_coverage, -gene_clusters), 1, mean) -> Mean_LLD
+  
+  tibble(BGC = BGC_LLD_coverage$gene_clusters, Mean = Mean_LLD) -> Mean_Cov_300OB
+  tibble(BGC = BGC_300OB_coverage$gene_clusters, Mean = Mean_300OB) -> Mean_Cov_LLD
+  left_join(Mean_Cov_300OB,Mean_Cov_LLD, by="BGC") %>% filter(Mean.x < 0.5 & Mean.y < 0.5) -> Filter_out
+  
   #filter on median abundance
-  apply(select(Filtered, -ID), 2, FUN= sum) -> v_total
-  (select(Filtered, -ID) / v_total) %>% as_tibble() %>% mutate(ID = Filtered$ID) %>%
-  gather(BGC, Abundance, 2:ncol(Filtered), factor_key=TRUE) %>%
-    group_by(BGC) %>% summarise(M=median(Abundance)) %>% filter(M < 0.01) -> Filter_out
+  #apply(select(Filtered, -ID), 2, FUN= sum) -> v_total
+  #(select(Filtered, -ID) / v_total) %>% as_tibble() %>% mutate(ID = Filtered$ID) %>%
+  #gather(BGC, Abundance, 2:ncol(Filtered), factor_key=TRUE) %>%
+  #  group_by(BGC) %>% summarise(M=median(Abundance)) %>% filter(M < 0.01) -> Filter_out
+  
+  
   #Normalization on unfiltered data
   if (Norm =="clr"){
     #Normalize comp
@@ -416,7 +438,7 @@ Filtering_Median_n_abundance = function(DF, Norm="clr"){
   }
   #Perform filters
   DF %>% select(c("ID", names(Keep))) -> DF
-  DF %>% select(! Filter_out$BGC) -> DF
+  DF %>% select(! one_of(Filter_out$BGC)) -> DF
   return(DF)
 }
 
@@ -450,17 +472,30 @@ results_BGCs_300OB %>% filter(FDR < 0.05) -> Significant_BGCs_300OB
 BGC_300OB_coverage %>% select(c(ID, Significant_BGCs_300OB$Regressor)) %>% gather(BGC, Coverage, 2:(1+length(unique(Significant_BGCs$Regressor))), factor_key=TRUE) %>%
   group_by(BGC) %>% summarise(median(Coverage))
 
-
+##Metanalysis
 full_join(results_BGCs,  results_BGCs_300OB, by= c("Regressor", "Metabolite"), suffix = c("LLD","300OB")) -> Combined_species
+
+Combined_species %>% mutate(Significance = ifelse(Pvalue300OB < 0.05 & PvalueLLD < 0.05, "both", ifelse(Pvalue300OB< 0.05 & PvalueLLD > 0.05, "300OB", ifelse(Pvalue300OB> 0.05 & PvalueLLD < 0.05, "LLD", "None" ))))  %>%
+  ggplot(aes( x = log10(as.numeric(BetaLLD)), y= log10(as.numeric(Beta300OB)), col = Significance)) + geom_point() +  theme_bw() + facet_wrap(~Metabolite)
+Combined_species %>% mutate(Concordance = sign(as.numeric(BetaLLD)) == sign(as.numeric(Beta300OB))) %>%
+  ggplot(aes( x = -log10(as.numeric(PvalueLLD)), y= -log10(as.numeric(Pvalue300OB)), col = Concordance)) + geom_point() +  theme_bw() + facet_wrap(~Metabolite) + 
+  geom_vline(xintercept = -log10(0.05)) + geom_hline(yintercept = -log10(0.05))
+
 Metanalyze(Combined_species) %>% mutate(FDR = p.adjust(MetaP,"fdr")) %>% arrange(MetaP) -> Meta_BGC
+Meta_BGC %>% filter(FDR<0.05) %>% select(Bug, Concordance,MetaP,MetaW)
+#Check coverage of the significant results
+Meta_BGC %>% filter(FDR<0.05) -> BGCs_names
+BGC_300OB_coverage %>% select(BGCs_names$Bug) %>% summarise_all(mean)
+BGC_LLD_coverage %>% select(BGCs_names$Bug) %>% summarise_all(mean)
+Meta_BGC %>% ggplot(aes(x=MetaW, y = -log10(MetaP), col=FDR<0.05)) + geom_point() + theme_bw() + facet_wrap(~Metabolite)
 
-
-
-####Gene abundance
+#####################
+####Gene abundance###
+#####################
 
 Prepare_cutC_shortbred = function(Cluster_abundance, Metabolites, Covariates){
   Cluster_abundance2 = Cluster_abundance
-  Cluster_abundance %>% select(-c(Hits,TotMarkerLength)) %>% spread(Family, Count) -> Cluster_abundance2
+  Cluster_abundance %>% select(-c(Hits,TotMarkerLength)) %>% spread(Count, Family) -> Cluster_abundance2
   Cluster_abundance2 %>% summarise_if(is_numeric, sum) %>% t() %>% as.data.frame() %>%
   rownames_to_column() %>% filter(V1 > 0) -> Keep_columns 
   Cluster_abundance2 %>% select(c("ID",Keep_columns$rowname)) -> Cluster_abundance2
@@ -489,7 +524,7 @@ wide_results_Annotation[wide_results2 < 0.01] <- "**"
 pheatmap::pheatmap(wide_results,fontsize_number = 20, display_numbers = wide_results_Annotation)
 
 
-Prepare_cutC_shortbred(Cluster_abundance = CutC_300OB, Metabolites =Dependent_metabolites_300O , Covariates=Covariates_300O) -> Input_shortbred
+Prepare_cutC_shortbred(Cluster_abundance = Gene_abundance_300OB, Metabolites =Dependent_metabolites_300O , Covariates=Covariates_300O) -> Input_shortbred
 
 
 Results_shortbred = Iterate_Metabolites(Input_shortbred[[1]], Input_shortbred[[2]], Input_shortbred[[3]], "MGS_shortbred_300OB",FDR_iter = 0)
@@ -513,8 +548,26 @@ Combined_shortbred %>% select(-c("FDRLLD","FDR300OB")) %>% drop_na() -> Combined
 Metanalyze(Combined_shortbred) ->  Meta_shortbred
 Meta_shortbred %>% mutate(FDR = p.adjust(MetaP, "fdr")) %>% ggplot(aes(x=MetaW, y = -log10(MetaP), col=FDR<0.05)) + geom_point() + theme_bw() + facet_wrap(~Metabolite)
 
+####Structural Variants
+Variable_SV = read_tsv("~/../Downloads/20200801_LLD_300OB_variableStructuralVariation_1437samples.tsv")
+Variable_SV_LLD = filter(Variable_SV, grepl("LLD", ID))
+Variable_SV_300OB = filter(Variable_SV, ! grepl("LLD", ID))
+
+Prepare_Metagenome_species(Variable_SV_LLD, Metabolites = Dependent_metabolites, Covariates = Covariates) -> Variable_SV_LLD_match
+Prepare_Metagenome_species(Variable_SV_300OB, Metabolites = Dependent_metabolites_300O, Covariates = Covariates_300O) -> Variable_SV_300OB_match
+
+Results_SV_LLD = Iterate_Metabolites(Variable_SV_LLD_match[[1]], Variable_SV_LLD_match[[2]], Variable_SV_LLD_match[[3]], "MGS_SV_LLD",FDR_iter = 0)
+Results_SV_300OB = Iterate_Metabolites(Variable_SV_300OB_match[[1]], Variable_SV_300OB_match[[2]], Variable_SV_300OB_match[[3]], "MGS_SV_300OB",FDR_iter = 0)
 
 
+Variant_interest = "[Eubacterium] rectale DSM 17629:487_489"
+load("~/../Downloads/lld_dsv_exp_lr_res.RData")
+as_tibble(lld_dsv_exp_lr_res$table) %>% filter(Phenotype == Variant_interest) %>% 
+  arrange(p) %>% mutate(FDR = p.adjust(p, "fdr")) %>% select(-c(Phenotype,uniq_N, fdr.p, bonferroni.p))
+
+
+load("~/../Downloads/all_dsv_tmao_lm_res.RData")
+as_tibble(all_dsv_tmao_lm_res$table) %>% filter(Taxa == Variant_interest) %>% arrange(p)
 #######################################
 ####Non-microbiome correlations########
 #######################################
@@ -529,10 +582,14 @@ Clinical_Questionaries %>% select(-c(antrop_gender.F1M2, antrop_age, antrop_BMI,
 #Overview of phenotypes
 colnames(select(Clinical_Questionaries, -ID))
 List_output = Match_dataset(Dependent_metabolites, Covariates, Clinical_Questionaries)
+List_output[[3]] = apply(select(List_output[[3]], -ID),2, scale) %>% as_tibble() %>% mutate(ID = List_output[[3]]$ID) 
 Results_Phenos_LLD = Iterate_Metabolites(List_output[[1]],List_output[[2]],List_output[[3]], "Phenotypes_LLD",Correct = "BH")
 Results_Phenos_LLD %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10(Pvalue), col = FDR<0.05)) +
   facet_wrap(~Metabolite, scales="free") + theme_bw() +theme(axis.text.x = element_text(angle = 90, hjust = 1))
 write_csv(x = Results_Phenos_LLD, path = "LLD_300OB/Phenotypes_LLD.csv")
+
+Make_heatmap(Results_Phenos_LLD)
+
 
 ###300OB
 Phenotypes_300O = select(Phenotypes_300O, -c("Age", "Gender","BMI", "kreatinin"))
@@ -543,6 +600,7 @@ Results_Phenos_300OB  %>% ggplot() + geom_point(aes(x=as.numeric(Beta), y=-log10
   facet_wrap(~Metabolite, scales="free") + theme_bw() +theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
 write_csv(x = Results_Phenos_300OB, path = "LLD_300OB/Phenotypes_300OB.csv")
+Make_heatmap(Results_Phenos_300OB)
 
 
 ##########
@@ -558,7 +616,7 @@ write_csv(x = Results_Diet, path = "LLD_300OB/Diet_LLD.csv")
 
 
 
-
+Results_Diet %>% mutate(FDR = p.adjust(Pvalue, "fdr")) %>% arrange(Pvalue) %>% select(-SE, N) %>% print(n=20)
 
 
 
@@ -626,9 +684,7 @@ multiomics = function(MET="TMAO", Remove_col = T, alpha=1, More_models= T, Trans
   #######
   
   ##Lasso Model##
-  print(MET)
-  
-  
+
   set.seed(45)
   cvfit = cv.glmnet(y=as.vector(Dependent), x=as.matrix(Regressors), nfolds = 10,type.measure="mse",standardize=T, alpha=alpha)
   Param_best = coef(cvfit, s = "lambda.min")
@@ -694,3 +750,166 @@ Input_MGS[[2]] %>% mutate(Y = as_vector(dplyr::select(Input_MGS[[1]], "TMAO"))) 
 ans.ADE <- sommer::mmer(Y~Age + Gender + BMI,
                         random=~vs(ID,Microbial_kinship),
                         data=Input_model)
+
+
+
+
+###Partition Variance
+###############
+###Functions###
+###############
+R2_calc = function(Real,pred){
+  rss = sum((pred - Real)^2)
+  tss = sum((Real - mean(Real))^2)
+  rsq = 1 - rss/tss
+  return(rsq)
+}
+Fit_lasso = function(Dependent, Regressors){
+  Regressors %>% mutate(Dependent = Dependent) -> Regressors2
+  if (dim(Regressors)[[2]] < 2){
+    lm(Dependent ~ ., Regressors2) -> Fitted
+    Explained_variance = summary(Fitted)$r.squared
+    Beta = summary(Fitted)$coefficients[2]
+    Param_best = tibble(Variable = colnames(Regressors), Beta= Beta)
+  } else{
+    cv.glmnet(Dependent ~ ., Regressors2, alpha = 1, nfolds = 10, type.measure="mse",standardize=T) -> cvfit
+    Param_best <- coef(cvfit, s = "lambda.min")
+    Explained_variance = cvfit$glmnet.fit$dev.ratio[which(cvfit$glmnet.fit$lambda == cvfit$lambda.min)]
+    as.data.frame(as.matrix(Param_best)) %>% rownames_to_column() %>% as_tibble() -> Param_best
+    colnames(Param_best) = c("Variable","Beta")
+  }
+  return(list(Param_best, Explained_variance))
+  
+}
+Fit_logistic_lasso = function(Dependent, Regressors){
+  Regressors %>% mutate(Dependent = Dependent) -> Regressors2
+  if (dim(Regressors)[[2]] < 2){
+    glm(as.factor(Dependent) ~ ., Regressors2, family=binomial(link="logit")) -> Fitted
+    Explained_variance = R2_calc(as.factor(Dependent),predict(Fitted,type="response") )
+    Beta = summary(Fitted)$coefficients[2]
+    Param_best = tibble(Varaible=colnames(Regressors), Beta=Beta)
+  } else{
+    cv.glmnet(as.factor(Dependent) ~ ., Regressors2, alpha = 1, nfolds = 10, family = "binomial", type.measure = "class",standardize=T,) -> cvfit
+    Param_best <- coef(cvfit, s = "lambda.min")
+    Explained_variance = cvfit$glmnet.fit$dev.ratio[which(cvfit$glmnet.fit$lambda == cvfit$lambda.min)]
+    as.data.frame(as.matrix(Param_best)) %>% rownames_to_column() %>% as_tibble() -> Param_best
+    colnames(Param_best) = c("Variable","Beta")
+  }
+  return(list(Param_best, Explained_variance))
+  
+  
+}
+
+
+library(glmnet)
+library(glmnetUtils)
+
+Metabolite_iteration = function(Input, Summary,Metabolites,Covariates, threshold = 0.05){
+  #Divide phenotypes in categories
+  Microbes <- unique(filter(Summary, origin == "microbial")$Regressor)
+  Diet <- unique(filter(Summary, origin == "diet")$Regressor)
+  Clinical <- unique(filter(Summary, origin == "clinical")$Regressor)
+  BGCs <- unique(filter(Summary, origin == "BGC")$Regressor)
+  Covariates_n <- colnames(select(Covariates, -ID))
+  #Output dataframe
+  Variability_explained = tibble()
+  #Name of the models
+  Name_models <- c("Complete", "Clinical", "Microbes", "Diet", "BGC", "Null")
+  #Make all variables in numberic/character, currently the function does not accept highly multifactorial variables. 2 level factors become numeric.
+  Variables_Input <- select(Input, -ID)
+  apply(Variables_Input,2, FUN=Make_numeric) %>% as_tibble() -> Variables_Input #Check Make_numeric function
+  #This are the column names that are used to save the Betas, so if you need the beta of a specific varaible, should be in Variables_col vector
+  Variables_Input %>% select(c(Microbes, Diet, Clinical, BGCs)) -> Variables_col 
+  c(colnames(Variables_col), Covariates_n) -> Variables_col
+  
+  All_model_info =tibble()
+  for (Metabolitee in colnames(Metabolites)){
+    set.seed(99)
+    if (Metabolitee == "ID"){next}
+    Logit = F
+    #Get the metabolite of interest and their associations 
+    Summary %>% filter(Metabolite == Metabolitee & FDR<threshold)  -> Selected_phenotypes
+    if (dim(Selected_phenotypes)[1] == 0 ){     print(paste(c(Metabolitee, "miss"))) ; next }  #if no associations, go to next metabolite
+    print(Metabolitee)
+    #From the Input after transforming it to numeric select the Metabolite (dependent), phenotypes assocaited and Covariates. Remove all records with NA.
+    mutate(Variables_Input, ID=Input$ID) %>% select(one_of(c("ID", unique(Selected_phenotypes$Regressor)))) %>% drop_na() -> Input_model
+    left_join(left_join(Input_model, Covariates), select(Metabolites, c("ID",Metabolitee))) %>% select(-ID) -> Input_model
+    
+    #Make a vector out of dependent
+    Dependent <- as.numeric(as.vector(as_vector(select(Input_model, Metabolitee))))
+    Input_model %>% select(-Metabolitee) -> Input_model
+    #If dependent is a character, then do logistic
+    if (class(Dependent[0]) == "character"){ Logit = T}
+    #Prepare the different inputs for each model
+    Variables_complete <- Input_model
+    Variables_clinical  <- select(Input_model, one_of(c(Clinical, Covariates_n)))
+    Variables_microbiome <- select(Input_model, one_of(c(Microbes, Covariates_n)))
+    Variables_diet <- select(Input_model, one_of(c(Diet, Covariates_n)))
+    Variables_BGC <- select(Input_model, one_of(c(BGCs, Covariates_n)))
+    Variables_null <- select(Input_model, one_of(Covariates_n))
+
+    Models <- list( Variables_complete, Variables_clinical, Variables_microbiome,Variables_diet, Variables_BGC,Variables_null)
+    #Vector of R2s for output 1
+    Variability_model = c()
+    #Data.frame of variables for output 2
+    tibble(Variable = Variables_col) -> Variables
+    #For each model, fit lasso (normal or logistic) and save R2 and variables
+    for (N in seq(1:length(Name_models)) ){
+      Input_model <- Models[[N]] ; Name <- Name_models[[N]]
+      #If 0 significant features add as 0 all beta and R2 and go to next
+      if (dim(Input_model)[2] < 1){ 
+        Variability_model = c(Variability_model,0)
+        Model_summary = tibble(Variable=Variables, Beta=NA) %>% t() %>% as_tibble() %>% `colnames<-`(Summary$metabolite)
+        Model_summary %>% mutate(Model = Name, Metabolite = Metabolitee) -> Model_summary
+        next 
+      }
+      if (Logit == F){ Fit_lasso(Dependent = Dependent, Regressors = Input_model) -> Lasso_results
+      }else{ Fit_logistic_lasso(Dependent = Dependent, Regressors = Input_model) -> Lasso_results }
+      #Add the betas to the Data.frame of features (only features included in that data.frame are going to get the Beta saved)   
+      left_join(Variables,Lasso_results[[1]],by = "Variable") %>% t() %>% as_tibble() %>% `colnames<-`(Variables$Variable) -> Model_summary
+      Model_summary[2,] %>% mutate(Model = Name, Metabolite = Metabolitee) -> Model_summary
+      All_model_info = rbind(All_model_info, Model_summary)
+      #Save R2
+      Variability_model = c(Variability_model,as.numeric(Lasso_results[[2]]))
+    }
+    #Make R2s into a data.frame with each model per column
+    as_tibble(matrix(Variability_model,nrow = 1,ncol = 6)) %>% mutate(V7 = Metabolitee) -> Variability_model
+    colnames(Variability_model) = c(Name_models, "Metabolite")
+    rbind(Variability_explained, Variability_model) -> Variability_explained
+  }
+  return(list(Variability_explained, All_model_info))
+}
+Make_numeric = function(x){
+  if(length(unique(x)) == 2 ){
+    x = as.numeric(as.factor(x))-1
+  } else if (length(unique(x)) < 5){
+    x = as.factor(x)
+  }else{
+    x=as.numeric(x)
+  }
+  return(x)
+}
+
+#Results
+rbind(mutate(Results_Diet, origin="diet"), mutate(Results_Phenos_LLD, origin="clinical"), mutate(Results_MGS, origin="microbial"), mutate(results_BGCs,origin="BGC")  ) %>% mutate(FDR = p.adjust(Pvalue, "fdr")) -> Result_table
+Result_table %>% arrange(FDR)
+#Input table
+left_join(left_join(left_join(Regr[[3]], List_output[[3]]), Input_MGS[[3]]),BGC_match_LLD[[3]]) -> Big_input_table
+
+write_tsv(x = Result_table, path="LLD_Complete_results_table.tsv")
+write_tsv(x = Big_input_table, path="Data/LLD/LLD_Complete_input_table.tsv")
+
+
+Covariates %>% filter(ID %in% Big_input_table$ID) -> covariates_glm
+Dependent_metabolites %>% filter(ID %in% Big_input_table$ID) -> dependent_glm
+
+Metabolite_iteration(Input = Big_input_table, Summary=  Result_table, Metabolites = dependent_glm, Covariates = covariates_glm, threshold=0.1) -> Output_model
+
+
+Output_model[[1]] %>% gather(Source, R2, Complete:BGC, factor_key=TRUE) -> Long_R2
+rbind(mutate(Long_R2, Null_model=F)  , mutate(TEST, R2= Null, Null_model=T)) %>% 
+  ggplot(aes(x=Metabolite, y=R2, group=Source, fill=Source, alpha=Null_model)) + 
+  geom_bar(stat="identity", position = "dodge", colour="black") +
+  theme_bw() + coord_flip() +   scale_alpha_manual(values=c(0.5, 1)) +
+  scale_fill_manual(values = wesanderson::wes_palette("Royal2"))
+
