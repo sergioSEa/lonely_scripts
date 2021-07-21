@@ -28,31 +28,31 @@ for F in Path(Input_path).glob("*.vcf.gz"):
 	List_names.append(F.stem.split(".")[0])
 	Intermediates.append(Inter)
 
-	
+Phenos = ["TMAO.Choline","TMAO.Betaine","TMAO.Carnitine", "TMAO.Butyrobetaine", "Butyrobetaine.Carnitine"]
 rule all:
 	input: 
 		Outputs,
-		expand("Output/GWAS_results_{Pheno}{Gender}.MetaScore.assoc.gz", Pheno=["TMAO","Choline","Betaine","L-Carnitine"],Gender=["1","2","3"]),
-		expand("{Pheno}.{Study}.{Gender}.done",  Pheno=["TMAO","Choline","Betaine","L-Carnitine"],Gender=["1","2","3"], Study=config["Cohort"])
+		expand("Output/GWAS_results_{Pheno}{Gender}.MetaScore.assoc.gz", Pheno= Phenos,Gender=["1","2","3"]),
+		expand("{Pheno}.{Study}.{Gender}.done",  Pheno=Phenos,Gender=["1","2","3"], Study=config["Cohort"])
 		
 rule Filter_individuals:
 	input: 
-		vcf = Input_path + "/{Name}.dose.vcf.gz",
-		remove = config["Remove_individuals"]
+		vcf = Input_path + "{Name}.dose.vcf.gz", #"/{Name}.dose.vcf.gz",
+		remove_s = config["Remove_individuals"]
 	output: "Dataset/{Name}.vcf"
 	threads: 6
 	shell:
-		"module load plink/1.9-foss-2015b ;\n"
-		"module load BCFtools/1.7-foss-2015b ;\n"
-		"bcftools convert  --samples-file {input.remove} --output {output} --output-type v --threads {threads} {input.vcf}"
+		"module load PLINK/1.9-beta6-20190617 ;\n"
+		"module load BCFtools/1.9-foss-2018b ;\n"
+		"bcftools convert  --samples-file ^{input.remove_s} --output {output} --output-type v --threads {threads} {input.vcf}"
 
 rule Filters_for_PCA:
 	input: 	rules.Filter_individuals.output
 	output:	"Filtered/{Name}.vcf"
 	threads: 6
 	shell:
-		"module load plink/1.9-foss-2015b ;\n"
-		"plink --vcf {input} --maf 0.01 --geno 0.1 --hwe 0.000001 --out Filtered/{wildcards.Name} --recode vcf"
+		"module load PLINK/1.9-beta6-20190617 ;\n"
+		"plink --vcf {input} --maf 0.01 --geno 0.1 --hwe 0.000001 --double-id --out Filtered/{wildcards.Name} --recode vcf"
 
 rule merge_files:
 	input: Intermediates
@@ -60,25 +60,23 @@ rule merge_files:
 		M ="Filtered/Merged.vcf",
 		F = touch("merged_Completed")
 	shell:
-		"module load BCFtools/1.7-foss-2015b ; \n"
-		"python3 scripts/Merge.py Filtered {output.M}"
+		"module load BCFtools/1.9-foss-2018b Python/3.7.4-GCCcore-7.3.0-bare ; \n"
+		"python scripts/Merge.py Filtered {output.M}"
 rule LD_Pruning:
 	input: 
 		flag = rules.merge_files.output.F,
 		i = rules.merge_files.output.M
 	output: "Filtered/Merged_pruned.bed"
 	shell:
-		"module load plink/1.9-foss-2015b ;\n"
-		"plink --vcf {input.i}  --indep-pairwise 1000 50 0.3 --out PCA_pruned ; \n"
-		"plink --vcf {input.i} --extract PCA_pruned.prune.in --make-bed --out Filtered/Merged_pruned"
+		"module load PLINK/1.9-beta6-20190617 ;\n"
+		"plink --vcf {input.i}  --indep-pairwise 1000 50 0.3 --double-id --out PCA_pruned ; \n"
+		"plink --vcf {input.i} --extract PCA_pruned.prune.in --make-bed --double-id --out Filtered/Merged_pruned"
 
 rule PCA:
 	input: rules.LD_Pruning.output
 	output: "Output/Plot_PCA.png"
 	shell:
-		"module load plink/1.9-foss-2015b ;\n"
-		"module load Python/2.7.11-foss-2015b ;\n"
-		"module load matplotlib/1.5.1-foss-2015b-Python-2.7.11 ;\n"
+		"module load PLINK/1.9-beta6-20190617 PythonPlus/3.7.4-foss-2018b-v20.11.1;\n"
 		"plink --bfile Filtered/Merged_pruned --pca ;\n"
 		"python scripts/Plo_pca.py {output}"
 
@@ -87,20 +85,20 @@ rule remove_imputed:
 	output:	l = "Genotyped_list.txt",
  		final = "Genotyped.vcf"
 	shell:
-		"module load plink/1.9-foss-2015b ;\n"
+		"module load PLINK/1.9-beta6-20190617 ;\n"
 		"touch  Genotyped_list.txt ; \n"
 		"array=( {input} ) ; \n"
 		'for i in "${{array[@]}}" ; do \n'
 			'cat "${{i}}" | grep "PASS;GENOTYPED" | cut -f3 >> Genotyped_list.txt ;\n'
 		"done ;\n"
-		"plink --vcf Filtered/Merged.vcf --recode vcf --out Genotyped --extract  Genotyped_list.txt"
+		"plink --vcf Filtered/Merged.vcf --recode vcf --out Genotyped --extract  Genotyped_list.txt --double-id"
 
 rule IBD:
 	input: rules.remove_imputed.output.final
 	output: "Output/plink.genome"
 	shell:
-		"module load plink/1.9-foss-2015b ;\n"
-		"plink --vcf Genotyped.vcf --genome --out Output/plink ;\n"
+		"module load PLINK/1.9-beta6-20190617 ;\n"
+		"plink --vcf Genotyped.vcf --genome --out Output/plink --double-id ;\n"
 		
 rule find_related:
 	input: rules.IBD.output
@@ -109,18 +107,18 @@ rule find_related:
 		List = "Output/related.tsv"
 
 	shell:
-		"python scripts/Check_IB.py > {output.related} ;\n"
+		"ml Python/3.7.4-GCCcore-7.3.0-bare; python scripts/Check_IB.py > {output.related} ;\n"
 		
 rule Filter2:
 	input:
-		Remove_IBD = rules.find_related.output.related,
+		Remove_IBD = "remove_related.txt",
 		vcf = "Dataset/{Name}.vcf"
 	output:
 		Remove = temp("Remove2_{Name}.txt"), 
 		F = "Filter_GWAS/{Name}.vcf"
 	threads: 6
 	shell:
-		"module load BCFtools/1.7-foss-2015b ;\n"
+		"module load BCFtools/1.9-foss-2018b ;\n"
 		"cat {input.Remove_IBD} remove_PCA_outliers.txt | sort | uniq > {output.Remove} ;\n"
 		"bcftools convert  --samples-file ^{output.Remove} --output {output.F}  --output-type v --threads {threads} {input.vcf}"
 
@@ -128,23 +126,23 @@ rule Merge2:
 	input: expand("Filter_GWAS/{Name}.vcf", zip, Name= List_names)
 	output: "Filter_GWAS/Merged.vcf"
 	shell:
-		"module load BCFtools/1.7-foss-2015b ; \n"
-		"module load Python/3.6.3-foss-2015b ; \n"
+		"module load BCFtools/1.9-foss-2018b ; \n"
+		"module load Python/3.7.4-GCCcore-7.3.0-bare ; \n"
 		"python scripts/Merge.py Filter_GWAS {output}"
 rule Prepare_covariates:
 	input: 
-		PCA = rules.PCA.output,
+		#PCA = rules.PCA.output,
 		Covariates = config["Covariates"]
 	output: "Transformed_covariates.tsv"
 	shell:	
-		"Rscript scripts/Transformation.R {input.Covariates}" 
+		"ml  RPlus/3.6.1-foss-2018b-v19.07.1; Rscript scripts/Transformation.R {input.Covariates}" 
 rule Choose_phenotype:
 	input: rules.Prepare_covariates.output
 	output:	
 		Phenofile = "Output/Phenotype.phe",
 		Covariates = "Output/Covariates.phe",
 	shell:
-		"python Prepare_phenotype_input.py"
+		"ml Python/3.7.4-GCCcore-7.3.0-bare; python scripts/Prepare_phenotype_input.py"
 rule Split_Male_Female:
 	input: 
 		Phenotype = rules.Choose_phenotype.output.Phenofile,
@@ -201,7 +199,12 @@ rule Final_format:
 		End_flag = touch("{Pheno}.{Study}.{Gender}.done")
 	run:
 		import datetime
-		Metabo_dic = {"Betaine":"BETAINE", "Choline":"CHOLINE", "L-Carnitine":"CARNITINE", "TMAO":"TMAO"}
+		Metabo_dic = {}
+		Phenos = ["TMAO.Choline","TMAO.Betaine","TMAO.Carnitine", "TMAO.Butyrobetaine", "Butyrobetaine.Carnitine", "Betaine", "Choline", "L-Carnitine", "y-byrobetaine"]
+		for i in Phenos:
+			Metabo_dic[i] = i.upper()
+			if i == "L-Carnitine": Metabo_dic[i] = "CARNITINE"
+			if i == "y-butyrobetaine": Metabo_dic[i] = "DEOXYCARNITINE"
 		Gender_dic = {"1":"MALES","2":"FEMALES","3":"ALL"}
 
 		dt = datetime.datetime.today()
