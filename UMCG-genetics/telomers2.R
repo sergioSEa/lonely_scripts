@@ -4,26 +4,29 @@ library(wesanderson)
 library(pheatmap)
 library(glmnet)
 
-Resilio_path = "~/../Resilio Sync"
+Resilio_path = "~/Resilio Sync"
 Make_path = function(P){
   paste(c(Resilio_path,P), collapse="/")
 }
 
 setwd(Make_path("Transfer/PhD/Telomeres_project/"))
 
-
+read_tsv("~/Resilio Sync/LLD phenotypes for Sergio/bio_aging/TL_FF_Sept2016_ProcessedSZ.txt") -> CHECK
+apply(CHECK,2,function(x){ as.numeric(str_replace(x,",",".")) } ) %>% as.tibble() %>% apply(2,function(x){ sum(is.na(x)) }  )
+apply(CHECK,2,function(x){ as.numeric(str_replace(x,",",".")) } ) %>% as.tibble() %>% filter(is.na(TLmemoryT)) %>% print(n=300)
 ###########################
 #########DATA##############
 ###########################
 ######Phenotypes and selection of phenotypes to be removed
-Phenotypes <- read_delim(Make_path("LLD phenotypes for Sergio/New Phenotypes clean_/Merged_Phenotypes_LLD.csv"), delim="|")
+Phenotypes <- read_delim(Make_path("LLD phenotypes for Sergio/New Phenotypes clean /Merged_Phenotypes_LLD.csv"), delim="|")
 To_remove <- read_tsv(Make_path("LLD phenotypes for Sergio/Phenotypes/Plain_text/to_be_excluded.txt"), col_names = F) %>% filter(X1 %in% colnames(Phenotypes))
+#Count NAs
+#map(Phenotypes, ~sum(is.na(.))) %>% as_tibble() %>% t() %>% View()
 #Remove repeated
 #Phenotypes %>% select(- colnames(Phenotypes)[grepl("_1",colnames(Phenotypes))]) -> Phenotypes
 Phenotypes %>% select(! one_of(To_remove$X1)) -> Phenotypes 
 
 Phenotypes %>% mutate(Parental_smoking = ifelse(smk13==1 | smk14==1, 1, 0)) -> Phenotypes
-
 #Columns used for cells
 column_cells = c("Lymph", "Eryth", "Mono", "Neutro", "Thrombo", "Eosino","Blood_baso")
 #Columns used for covariates
@@ -35,10 +38,15 @@ Phenotypes %>% mutate(age_m= ifelse(ID == "LLDeep_0968", 24, age_m)) %>% mutate(
 ######All biological aging markers, filter telomeres
 Age_markers <- read_tsv("Combined_data_uncorrected.tsv")
 Telomere_markers <- colnames(Age_markers)[grepl("MTL",colnames(Age_markers))]
-Age_markers %>% select(c("Sample",Telomere_markers)) %>% mutate(MTL_gran = as.numeric(MTL_gran), `MTL_CD20+`=as.numeric(`MTL_CD20+`), `MTL_CD45+_CD20-`=as.numeric(`MTL_CD45+_CD20-`)) %>%
+Age_markers %>% select(c("Sample",Telomere_markers)) %>% mutate(MTL_gran = as.numeric(MTL_gran), `MTL_CD20+`=as.numeric(`MTL_CD20+`), `MTL_CD45+_CD20-`=as.numeric(`MTL_CD45+_CD20-`), `MTL_CD57+` =as.numeric(`MTL_CD57+`)) %>%
   drop_na() -> Telomere_markers
 
-colnames(Telomere_markers) = c("Sample", "Lymphocytes", "Granulocytes", "Naïve T-cells", "Memory T-cells","B-cells","NK-cells")
+colnames(Telomere_markers) = c("Sample", "Lymphocytes", "Granulocytes", "Na?ve T-cells", "Memory T-cells","B-cells","NK-cells")
+
+#Ratio of differences
+Telomere_markers$`NK-cells` = as.numeric(Telomere_markers$`NK-cells`)
+Telomere_markers %>% select(-Sample) %>% drop_na() %>% summarise_all(mean) -> Mean_tel
+apply(Mean_tel, 2, function(x){ Res = c() ; for(COL in Mean_tel){Res = c(Res,x/COL)  } ; return(Res) }   ) -> Ratio_diff
 
 
 #Calculate Deltas for each age marker
@@ -159,8 +167,10 @@ Logistic_regression = function(Dependent, Regressor,Covariates, Regressor_name, 
   Results = as_tibble(t(c(Regressor_name, Dependent_name, as.numeric(Beta), as.numeric(stand), as.numeric(pvalue), N)))
   colnames(Results) = c("Regressor", "Dependent", "Beta", "SE", "Pvalue", "N")
   if (Plot == T ){
+    paste(c(Regressor_name, Dependent_name), collapse= " ") -> NAME
+  
     RES = lm(Regressor ~ Age ,Model_data)$residuals
-    Figure1 = ggplot(data=Model_data, aes(x=as.factor(Dependent), y=RES)) + geom_boxplot() + geom_point() + theme_bw()
+    Figure1 = ggplot(data=Model_data, aes(x=as.factor(Dependent), y=RES)) + geom_boxplot() + geom_point() + theme_bw() + ggtitle(NAME)
     print(Figure1)
     #try(suppressMessages(ggsave(plot=Figure1,filename=paste(c("C:/Users/Sergio/Documents/PhD/WORK/ImmunoAging/Plots/",Regressor_name,"vs",Dependent_name,".png"),collapse=""))))
   }
@@ -190,7 +200,7 @@ Model_phenotypes = function(Phenotypes, Data, Covariates, cells=NULL, BMI=F, Pro
     #If it is a binary outcome, perform a logistic regression. Otherwise, OLS
     if (length(unique(Dependent[!is.na(Dependent)])) == 2){ 
       Categorical = T
-      Dependent = as.numeric(as.factor(Dependent))
+      Dependent = as.factor(Dependent)
     }else if (length(unique(Dependent[!is.na(Dependent)])) >= 2){ 
       Categorical = F
       Dependent = as.numeric(Dependent)
@@ -200,7 +210,8 @@ Model_phenotypes = function(Phenotypes, Data, Covariates, cells=NULL, BMI=F, Pro
       Explanatory  = as.vector(as_vector(Data[,Col_m]))
       Name_2 = colnames(Data)[Col_m]
       Name_2= clean_name(Name_2)
-      To_plot = c()#c("age_f", "age_m", "Body_Mass_Index_kgM^2", "Do_your_parents,_siblings_or_children_have_diabetes_mellitus_type_2,_or_have_they_had_diabetes_mellitus_type_2?_No.", "Have_you_ever_had_poorly_healing_wounds_on_your_feet?","Parental_smoking","smk13","Waist_circumference_in_cm" )
+      if (Name %in% cell_types){ Dependent = scale(as.numeric(Dependent))  ;  Explanatory = scale(as.numeric(Explanatory))}
+      To_plot = c()#c("Thrombo", "Neutro")#c("age_f", "age_m", "BMI", "Parental_smoking","smk13","Waist_circum" )
       if (Name %in% To_plot){ PL = T
       } else{ PL = F}
       if (Categorical == T){
@@ -303,7 +314,7 @@ Telomere_markers %>% filter(Sample %in% Proteomics$ID) %>% arrange(Sample) -> Te
 
 ###Prepare covaraites for Phenotypes
 Phenotypes %>% select(c("ID",column_covariates)) %>% mutate(Age = AgeIncludingMonth) %>% select(-AgeIncludingMonth) -> Cov
-Phenotypes %>% select(-c(AgeIncludingMonth, AgeInDays, Sex)) -> Phenotypes
+Phenotypes %>% select(- any_of(c("AgeIncludingMonth", "AgeInDays", "Sex"))) -> Phenotypes
 
 cell_types = column_cells
 
@@ -318,6 +329,21 @@ left_join(mutate(Telomere_markers, ID = Sample), select(Cov,c("ID", "Age" , "Sex
 Exploration_telomeres %>% ggplot(aes(x=Telomere_length, col=as.factor(Sex) )) + geom_density() + theme_bw() + facet_wrap(~ Cell_line) +
   scale_color_manual(values = wesanderson::wes_palette("Royal1"),name="Sex",labels = c("Male", "Female")) -> Distribution_plot
 SAVE(NAME =  Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Distribution_Telomeres.pdf"),PLOT =Distribution_plot)
+#Distribution telomere length
+Exploration_telomeres %>% mutate(Cell_line=factor(Cell_line, levels= c("Na?ve T-cells","B-cells","Granulocytes", "Lymphocytes","Memory T-cells", "NK-cells"))) %>%
+  ggplot(aes(x=Age, y=Telomere_length, col=Cell_line ))  + theme_bw(base_size = 12)  + geom_smooth(method="lm", formula=y~x, size=1.5) + 
+  scale_color_manual(values = viridis::viridis(6)) -> telomere_trends
+SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Telomeres_comparison_trend.pdf"),PLOT = telomere_trends)
+
+Exploration_telomeres %>% mutate(Cell_line=factor(Cell_line, levels= c("Na?ve T-cells","B-cells","Granulocytes", "Lymphocytes","Memory T-cells", "NK-cells"))) %>% 
+ggplot(aes(y=Telomere_length, x=Cell_line, fill=Cell_line )) +  geom_violin() + geom_boxplot(width=0.1, outlier.alpha = 0) + scale_fill_manual(values=viridis::viridis(6)) + 
+ theme_bw(base_size = 12) + theme(axis.title.x=element_blank(),axis.text.x=element_blank() ,axis.ticks.x=element_blank()) -> distribution_length_by_Cell
+                                                                                                                                                                             
+
+SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Telomeres_Distribution_lengths.pdf"),PLOT = distribution_length_by_Cell)
+
+pairwise.wilcox.test(Exploration_telomeres$Telomere_length,Exploration_telomeres$Cell_line,paired = T)
+
 #Number of Males/Females
 Exploration_telomeres %>% group_by(Sex,Cell_line) %>% summarise(n())
 #correlation between telomere lengths
@@ -325,14 +351,46 @@ Exploration_telomeres %>% spread(Cell_line, Telomere_length) %>% drop_na() -> Ex
 cor(Exploration_telomeres_wide[4:9],method = "pearson") -> Correlation_matrix
 pheatmap(Correlation_matrix, color=RColorBrewer::brewer.pal(name ="YlOrRd", n=9)) -> Pheatmap_correlation_Telomeres
 SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Heatmap_Correlation_Telomeres.pdf"),PLOT = Pheatmap_correlation_Telomeres)
-pheatmap(abs(Correlation_matrix), color=RColorBrewer::brewer.pal(name ="YlOrRd", n=9)) -> Pheatmap_correlation_Telomeres_abs
+pheatmap(abs(Correlation_matrix), color=viridis::viridis(10)[10:20]) -> Pheatmap_correlation_Telomeres_abs
 SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Heatmap_Correlation_Telomeres_abs.pdf"),PLOT = Pheatmap_correlation_Telomeres_abs)
 
 
+
+
 #Correlation with Age and with Gender
-Exploration_telomeres %>% ggplot(aes(x=Age, y=Telomere_length, col=as.factor(Sex) )) + geom_point(size=1, alpha=0.5) + theme_bw() + facet_wrap(~ Cell_line, ncol = 1) +
-  scale_color_manual(values = wesanderson::wes_palette("Royal1"),name="Sex",labels = c("Male", "Female")) + geom_smooth(method="lm", formula=y~x) + scale_x_continuous(name="Age") -> Age_vs_Telomere
+Exploration_telomeres %>% ggplot(aes(x=Age, y=Telomere_length, col=as.factor(Sex) )) + geom_point(size=1, alpha=0.3) + theme_bw(base_size = 12) + facet_wrap(~ Cell_line, ncol = 2) +
+  scale_color_manual(values = viridis::viridis(2),name="Sex",labels = c("Male", "Female")) + geom_smooth(method="lm", formula=y~x) + scale_x_continuous(name="Age") -> Age_vs_Telomere
 SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Age_vs_Telomere.pdf"),PLOT = Age_vs_Telomere)
+#Just lymphocytes
+Exploration_telomeres %>% filter(Cell_line == "Lymphocytes") %>%  ggplot(aes(x=Age, y=Telomere_length, col=as.factor(Sex) )) + geom_point(size=1, alpha=0.3) + theme_bw(base_size = 12) + 
+  scale_color_manual(values = viridis::viridis(2),name="Sex",labels = c("Male", "Female")) + geom_smooth(method="lm", formula=y~x) + scale_x_continuous(name="Age") -> Age_vs_Telomere
+SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Age_vs_Telomere_lymph.pdf"),PLOT = Age_vs_Telomere)
+
+
+#Difference in Age slope between quantiles quantile 
+quantile(Exploration_telomeres_wide$Age) -> Age_q 
+Exploration_telomeres_wide %>% group_by(Age < Age_q[2], Age >Age_q[4]) %>% summarise(mean(`Na?ve T-cells`))
+
+Group_age1 = Exploration_telomeres_wide %>% filter(Age < Age_q[2])
+Group_age2 = Exploration_telomeres_wide %>% filter(Age > Age_q[2] & Age < Age_q[3])
+Group_age3 = Exploration_telomeres_wide %>% filter(Age > Age_q[3] & Age < Age_q[4])
+Group_age4 = Exploration_telomeres_wide %>% filter(Age > Age_q[4])
+Age_dependent_slope = tibble()
+for (Group_n in seq(1,4)){
+  Group = list(Group_age1,Group_age2,Group_age3,Group_age4)[[Group_n]]
+  for (Cell_n in seq(4,9)){
+    Cell = colnames(Group)[Cell_n]
+    Input_model = select(Group, c("Age", "Sex",Cell))
+    Model = paste(c( "`",Cell, "`" ,"~ Age + Sex"), collapse="")
+    print(Model)
+    as.data.frame(summary(lm(Model, Input_model))$coefficients)["Age" ,c(1,4)] -> Coeff
+    Age_dependent_slope = rbind(Age_dependent_slope, tibble(Quantile_age = Group_n, Cell_type = Cell, Slope_age= as.numeric(Coeff[1]), Pvalue= as.numeric(Coeff[2]) ))
+  }
+}
+Age_dependent_slope %>% mutate(Cell_type=factor(Cell_type, levels= c("Na?ve T-cells","B-cells","Granulocytes", "Lymphocytes","Memory T-cells", "NK-cells"))) %>%
+  ggplot(aes(x=Quantile_age, y=Slope_age, col=Cell_type)) + 
+  geom_line(size=1.5) + geom_point(aes(shape = Pvalue < 0.05), size=3) +
+  theme_bw() + scale_color_manual(values = c(wesanderson::wes_palette("Royal1"), wesanderson::wes_palette("Royal2")))
 
 
 model_age = function(x){ 
@@ -363,8 +421,8 @@ left_join(Exploration_telomeres_wide, Other_markers, by="ID") %>% drop_na() %>% 
 cor(select(Subset_all, -ID),method = "pearson") -> Correlation_matrix
 pheatmap(Correlation_matrix, color=rev(RColorBrewer::brewer.pal(name ="RdYlBu", n=9))) -> Corre_bioages
 SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Correlation_BioAges.pdf"),PLOT = Corre_bioages)
-pheatmap(abs(Correlation_matrix), color=RColorBrewer::brewer.pal(name ="YlOrRd", n=9)) -> Pheatmap_correlation_bioages_abs
-SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Heatmap_Correlation_Telomeres_abs.pdf"),PLOT = Pheatmap_correlation_Telomeres_abs)
+pheatmap(abs(Correlation_matrix), color=viridis::viridis(10)[2:10]) -> Pheatmap_correlation_bioages_abs
+SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Heatmap_Correlation_Telomeres_abs.pdf"),PLOT = Pheatmap_correlation_bioages_abs)
 
 #Are samples aging too-fast or too-slow the same in the different bio-aging measurements?
 Compare_outlaiers_bioage2(Phenos = left_join(Phenotypes, mutate(Cov, AgeIncludingMonth=Age)))
@@ -392,11 +450,18 @@ write_tsv(df, Make_path("LLD phenotypes for Sergio/Phenotypes/Summary_phenotypes
 Diet_score =  read_tsv("~/../Desktop/DIET_SCORES.tsv")
 Samples=   mutate(read_tsv("~/../Desktop/LLD_samples.tsv"), Participant=PSEUDO_OMICS) %>% select(Participant,LLDEEPID)
 left_join(Samples, Diet_score) %>% mutate(ID=LLDEEPID) %>% select(-c(Participant, LLDEEPID)) -> Diet_score
+Diet_score %>% select(aMED, ID) -> Diet_score
 left_join(Phenotypes,Diet_score) -> Phenotypes
-
+Phenotypes %>% mutate(smk_now = ifelse(smk_now == "2", "0", smk_now) ) %>% select(-one_of("HR")) -> Phenotypes
 ##Association without correcting for cell number
+
+
 Model_phenotypes(select(Phenotypes,-"ID"), select(Telomere_markers, -"Sample"), Cov) %>% mutate(Pvalue=as.numeric(Pvalue)) -> Model_results
 Model_results %>% mutate(FDR = p.adjust(Pvalue, "fdr")) %>% arrange(Pvalue) -> Model_results1
+Model_results %>% filter(Dependent %in% cell_types) %>% mutate(Effect_size = as.numeric(Beta), Pvalue = as.numeric(Pvalue)) %>% filter(Dependent %in% c("Thrombo", "Neutro")) %>% 
+  ggplot(aes(Regressor, Dependent, fill= Effect_size)) +   geom_tile(col="black") + scale_fill_gradient(low="white", high="#C06C84") +  theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) -> heatmap_cells
+SAVE(NAME = "~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Figures/Indv_correlation/cell_counts.pdf", PLOT=heatmap_cells)
+
 ##Association while controlling for cell number
 Model_phenotypes(select(Phenotypes,-"ID"), select(Telomere_markers, -"Sample"), Cov, cells=T) %>% mutate(Pvalue=as.numeric(Pvalue)) -> Model_results
 Model_results %>% mutate(FDR = p.adjust(Pvalue, "fdr")) %>% arrange(Pvalue) -> Model_results
@@ -405,6 +470,7 @@ left_join(select(Model_results, c(Regressor, Dependent, ,Beta, Pvalue, FDR, Leve
 Table_results %>% filter(FDR.cellcorrec < 0.05 | FDR.notcorrec<0.05 ) %>% arrange(Pvalue.cellcorrec) %>% mutate(Beta.cellcorrec=as.numeric(Beta.cellcorrec), Beta.notcorrec=as.numeric(Beta.notcorrec)) -> Table_results_sig
 write_tsv(Table_results_sig,path = "~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Summary_stats/Phenos_vs_Telomere_allSig.tsv")
 
+Model_results %>% filter(FDR<0.05) %>% group_by(Dependent) %>% summarise(n())
 
 #################Check the signiciant hits.
 ######BMI
@@ -450,13 +516,18 @@ BMI_1 + BMI_2 + plot_layout(guides = "collect")
 
 ####Smoking
 #Effect of different smoking phenotypes
-Model_results %>% filter(grepl("smk",Dependent) ) %>% filter(!Dependent %in% c("smk2","Age_smk_stop")) %>% ggplot(aes(x= Dependent, y=as.numeric(Beta), fill=-log10(Pvalue), col=Pvalue<0.05 )) + geom_bar(size=1, stat = "identity") +
-  theme_bw() + facet_wrap(~Regressor) + coord_flip() + scale_color_manual(values = c("white", "black")) + scale_fill_distiller(palette="YlOrRd" ,direction=1) +
-  scale_x_discrete(labels=c("smk1" = "Have_you_smoked_a_year?", "smk2" ="How_old_when_started_smoking?","smk13"= "father_smk", "smk14" = "mother_smk", "smk15"="mother_smk_pregnancy","smk10"="Number_people_smoke_at_home","smk11"= "Do_people_smoke_work","smk_now"="smk_participant")) -> Smoking_Associations
+Model_results %>% filter(grepl("smk",Dependent) ) %>% filter(!Dependent %in% c("smk2","Age_smk_stop")) %>% mutate(Beta = as.numeric(Beta), Phenotype = Dependent) %>%
+  ggplot(aes(x= Phenotype, y=Beta, fill=-log10(Pvalue), col=Pvalue<0.05 )) + geom_bar(size=1, stat = "identity") +
+  theme_bw(base_size = 12) + facet_wrap(~Regressor) + coord_flip() + scale_color_manual(values = c("white", "black")) + scale_fill_viridis_c()+ #scale_fill_distiller(palette="YlOrRd" ,direction=1) +
+  scale_x_discrete(labels=c("smk1" = "Have_you_smoked_a_year?", "smk2" ="How_old_when_started_smoking?","smk13"= "father_smk", "smk14" = "mother_smk", "smk15"="mother_smk_pregnancy","smk10"="Number_people_smoke_at_home","smk11"= "Do_people_smoke_work","smk_now"="Cuttent_smoker")) +
+  geom_errorbar(aes(ymin=Beta-as.numeric(SE) , ymax=Beta + as.numeric(SE)),width=.2, col="black")  -> Smoking_Associations
+SAVE(NAME = "~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Figures/Smoking associations.pdf" ,PLOT = Smoking_Associations)
 #compare effect size of Father and  Mother smoking
 Model_results %>% filter(grepl("smk",Dependent) ) %>% filter(Dependent %in% c("smk13", "smk14")) -> Man_vs_woman
 summary(lm(Beta ~ Dependent, Man_vs_woman)) #Significantly higher Beta in men
 left_join(filter(Man_vs_woman,Dependent=="smk13"),filter(Man_vs_woman,Dependent=="smk14"), by="Regressor") %>% ggplot(aes(x=as.numeric(Beta.x), y=as.numeric(Beta.y))) + geom_point()+theme_bw() #+geom_abline(intercept= -0.28317, slope=0.08748)
+
+
 
 
 ##CVD-related phenotypes with BMI correction
@@ -490,6 +561,46 @@ for (Col_n in 2:ncol(Phenotype_CVD)){
 }
 CVD_associations %>% mutate(FDR=p.adjust(Pvalue, "fdr")) %>% arrange(Pvalue)
 
+###PRS association
+##Load PRS##
+Codd_beta = as_tibble(read.table("PRS/codd_prs.profile",header = T))
+Codd_nobeta = as_tibble(read.table("PRS/codd_prs_nobeta.profile", header=T))
+Li_beta = as_tibble(read.table("PRS/li_prs.profile",header=T))
+Li_nobeta = as_tibble(read.table("PRS/li_prs_nobeta.profile",header=T))
+Results_PRS = tibble()
+for (N_PRS in seq(1,4)){
+  PRS = list(Codd_beta,Codd_nobeta,Li_beta,Li_nobeta)[[N_PRS]]
+  PRS_name = c("Codd_beta","Codd_nobeta","Li_beta","Li_nobeta")[N_PRS]
+  PRS %>% select(IID,SCORESUM ) -> PRS
+  lapply(PRS$IID, FUN= function(x){ str_split(x,"1_")[[1]][2] }) %>% unlist() -> IDs
+  PRS %>% mutate(ID = IDs, PRS_value = SCORESUM) -> PRS
+  
+  for (Cell_line in colnames(Telomere_markers)){
+    if (Cell_line == "Sample"){ next }
+    Telomere_markers %>% filter(Sample %in% PRS$ID) %>% arrange(Sample) %>% select(Cell_line) %>% as_vector() %>% as.vector() %>% as.numeric() -> Dependent
+    PRS %>% arrange(ID) %>% filter(ID %in% Telomere_markers$Sample ) %>% mutate(Dependent =Dependent) -> Entry_model
+    Cov -> Cov_to_add
+    left_join(Entry_model, Cov_to_add, by="ID") -> Entry_model
+    Entry_model %>% drop_na() -> Entry_model
+    MODEL = lm(Dependent ~ PRS_value + Age, Entry_model)
+    as.data.frame(confint(MODEL))["PRS_value",] -> Confidence
+    as.data.frame(summary(MODEL)$coefficients)["PRS_value",][,c(1,4)] %>% as_tibble() %>% mutate(Line = Cell_line, Input = PRS_name) -> RR
+    RR %>% mutate(Low = Confidence[,1], Up=Confidence[,2] ) -> RR
+    Results_PRS = rbind(Results_PRS, RR)
+  }
+  
+}
+Results_PRS %>% filter(Input == "Li_beta") %>% mutate(Pvalue = `Pr(>|t|)`, Telomere=Line) %>% 
+  ggplot(aes(y=Estimate,x= Telomere)) + geom_point(aes(col = -log10(Pvalue)), size=4, shape=15) +
+  coord_flip() + theme_bw(base_size = 12) + geom_hline(yintercept=0, linetype="dotted", size=1.5) +
+  geom_errorbar(aes(ymin=as.numeric(Low), ymax=as.numeric(Up)),width=.2) + scale_colour_viridis_c() -> PRS_effect
+  
+
+SAVE(PLOT = PRS_effect,NAME ="~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Figures/PRS_associations.pdf", Height = 2)
+
+PRS = Li_beta 
+
+
 
 #########################################################################
 #####Combine all phenotypes and calculate total variance explained#######
@@ -507,36 +618,20 @@ Variance_explained = tibble()
 clean_name(colnames(Phenotypes)) -> colnames(Phenotypes)
 Phenotypes %>% select(c(unique(filter(Model_results,FDR<0.05)$Dependent),ID)) -> Phenotypes_significant
 
-##Load PRS##
-Codd_beta = as_tibble(read.table("PRS/codd_prs.profile",header = T))
-Codd_nobeta = as_tibble(read.table("PRS/codd_prs_nobeta.profile", header=T))
-Li_beta = as_tibble(read.table("PRS/li_prs.profile",header=T))
-Li_nobeta = as_tibble(read.table("PRS/li_prs_nobeta.profile",header=T))
-Results_PRS = tibble()
-for (PRS in list(Codd_beta,Codd_nobeta,Li_beta,Li_nobeta)){
-  PRS %>% select(IID,SCORESUM ) -> PRS
-  lapply(PRS$IID, FUN= function(x){ str_split(x,"1_")[[1]][2] }) %>% unlist() -> IDs
-  PRS %>% mutate(ID = IDs, PRS_value = SCORESUM) -> PRS
-  
-  for (Cell_line in colnames(Telomere_markers)){
-    if (Cell_line == "Sample"){ next }
-    Telomere_markers %>% filter(Sample %in% PRS$ID) %>% arrange(Sample) %>% select(Cell_line) %>% as_vector() %>% as.vector() %>% as.numeric() -> Dependent
-    PRS %>% arrange(ID) %>% filter(ID %in% Telomere_markers$Sample ) %>% mutate(Dependent =Dependent) -> Entry_model
-    Cov -> Cov_to_add
-    left_join(Entry_model, Cov_to_add, by="ID") -> Entry_model
-    Entry_model %>% drop_na() -> Entry_model
-    as.data.frame(summary(lm(Dependent ~ PRS_value + Age, Entry_model))$coefficients)["PRS_value",][,c(1,4)] %>% as_tibble() %>% mutate(Line = Cell_line) -> RR
-    Results_PRS = rbind(Results_PRS, RR)
-  }
-  
-}
+#Plot of significant results
+Model_results %>% filter(Dependent %in% colnames(Phenotypes_significant)) %>% select(Regressor, Dependent, Beta) %>% mutate(Direction = ifelse(Beta>0, 1, -1)) -> Plot_direction
+Plot_direction$Dependent[Plot_direction$Dependent == "age_f"] = "Age Father" ;Plot_direction$Dependent[Plot_direction$Dependent == "age_m"] = "Age Mother" ;Plot_direction$Dependent[Plot_direction$Dependent == "smk15"] = "Mother smoke while pregnant" ; Plot_direction$Dependent[Plot_direction$Dependent == "smk13"] = "Father smoke" ;Plot_direction$Dependent[Plot_direction$Dependent == "Parental_smoking"] = "Any parent smoke"
+Plot_direction %>% mutate(Direction = as.numeric(Beta)) %>% select(Dependent, Regressor, Direction) %>% spread(Regressor, Direction) %>% as.data.frame() %>% column_to_rownames(var = "Dependent") -> wide_results2
+pheatmap::pheatmap(wide_results2,color = viridis::viridis(10),clustering_distance_rows="correlation",clustering_distance_cols="correlation" ) -> Heatmap_significant_ass
+SAVE(PLOT = Heatmap_significant_ass,NAME ="~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Figures/Heatmap_assocaitions_FDR.pdf",Height = 5)
+
 
 PRS = Li_beta 
 lapply(PRS$IID, FUN= function(x){ str_split(x,"1_")[[1]][2] }) %>% unlist() -> IDs ; PRS %>% mutate(ID = IDs, PRS_value = SCORESUM) %>% select(ID, PRS_value) %>% arrange(ID) -> PRS
 
 
 
-for (Cell_line in colnames(Telomere_markers)){
+#for (Cell_line in colnames(Telomere_markers)){
   if (Cell_line == "Sample"){ next }
   Telomere_markers %>% select(Cell_line) %>% as_vector() %>% as.vector() %>% as.numeric() -> Dependent
 
@@ -577,10 +672,9 @@ for (Cell_line in colnames(Telomere_markers)){
   #Output
   rbind(Variance_explained,tibble(Telomere=Cell_line, R2_parents= r2, R2_intrinsic = r2_intrinsic, R2_age=R2_null0, R2_genetics = r2_genetics)) -> Variance_explained
 }
-Variance_explained %>% mutate(R2_genetics = R2_genetics - R2_parents, R2_parents = R2_parents-R2_intrinsic, R2_intrinsic = R2_intrinsic-R2_age) %>% gather("Model","r2", c("R2_parents","R2_intrinsic","R2_age","R2_genetics")) %>% mutate(Model = fct_relevel(Model,c("R2_genetics","R2_parents", "R2_intrinsic", "R2_age"))) %>%
-  ggplot(aes(x=Telomere, y=r2, fill=Model)) + geom_bar(position="stack", stat="identity") +
-  coord_flip() + theme_bw() + scale_fill_manual(values = wesanderson::wes_palette("Royal1")) 
-
+#Variance_explained %>% mutate(R2_genetics = R2_genetics - R2_parents, R2_parents = R2_parents-R2_intrinsic, R2_intrinsic = R2_intrinsic-R2_age) %>% gather("Model","r2", c("R2_parents","R2_intrinsic","R2_age","R2_genetics")) %>% mutate(Model = fct_relevel(Model,c("R2_genetics","R2_parents", "R2_intrinsic", "R2_age"))) %>%
+#  ggplot(aes(x=Telomere, y=r2, fill=Model)) + geom_bar(position="stack", stat="identity") +
+#  coord_flip() + theme_bw() + scale_fill_manual(values = wesanderson::wes_palette("Royal1")) 
 
 #With extra partitions
 Variance_explained2 = tibble()
@@ -601,7 +695,7 @@ for (Cell_line in colnames(Telomere_markers)){
   R2_null0 = R2_calc(as.vector(Entry_model$Dependent), predict(Null_0))
   
   #Host factors model
-  Entry_model %>% select(-c(Parental_smoking, smk13,age_f, age_m)) -> Entry_model2
+  Entry_model %>% select(-one_of(c("Parental_smoking","smk13","age_f", "age_m"))) -> Entry_model2
   #1. Sex
   cvfit = cv.glmnet(y=as.vector(Entry_model2$Dependent), x=as.matrix(select(Entry_model2,c(Sex,Age))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
   Estimation = predict(cvfit, as.matrix(select(Entry_model2,c(Sex,Age))), s="lambda.min")
@@ -609,6 +703,77 @@ for (Cell_line in colnames(Telomere_markers)){
   #2. Cells
   cvfit = cv.glmnet(y=as.vector(Entry_model2$Dependent), x=as.matrix(select(Entry_model2,c("Sex","Age", cell_types))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
   Estimation = predict(cvfit, as.matrix(select(Entry_model2,c("Sex","Age", cell_types))), s="lambda.min")
+  r2_cells = R2_calc(as.vector(Entry_model2$Dependent), Estimation)
+  #3. BMI
+  cvfit = cv.glmnet(y=as.vector(Entry_model2$Dependent), x=as.matrix(select(Entry_model2,-c(ID,Dependent))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
+  Estimation = predict(cvfit, as.matrix(select(Entry_model2,-c(ID,Dependent))), s="lambda.min")
+  r2_BMI = R2_calc(as.vector(Entry_model2$Dependent), Estimation)
+  #4HR
+  #Entry_model %>% select(-one_of(c("Parental_smoking","smk13","age_f", "age_m"))) -> Entry_model3
+  #cvfit = cv.glmnet(y=as.vector(Entry_model3$Dependent), x=as.matrix(select(Entry_model3,-c(ID,Dependent,Pulse_rate, Poorly_healing_wounds_feet))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
+  #Estimation = predict(cvfit, as.matrix(select(Entry_model2,-c(ID,Dependent))), s="lambda.min")
+  #r2_HR = R2_calc(as.vector(Entry_model3$Dependent), Estimation)
+  #5Pulse rate
+  #cvfit = cv.glmnet(y=as.vector(Entry_model3$Dependent), x=as.matrix(select(Entry_model3,-c(ID,Dependent,Poorly_healing_wounds_feet))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
+  #Estimation = predict(cvfit, as.matrix(select(Entry_model2,-c(ID,Dependent))), s="lambda.min")
+  #r2_pulse = R2_calc(as.vector(Entry_model3$Dependent), Estimation)
+  #6 Wounds feet
+  #cvfit = cv.glmnet(y=as.vector(Entry_model3$Dependent), x=as.matrix(select(Entry_model3,-c(ID,Dependent))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
+  #Estimation = predict(cvfit, as.matrix(select(Entry_model2,-c(ID,Dependent))), s="lambda.min")
+  #r2_pulse = R2_calc(as.vector(Entry_model3$Dependent), Estimation)
+  
+  
+  #Model complete (+Parental factors)
+  cvfit = cv.glmnet(y=as.vector(Entry_model$Dependent), x=as.matrix(select(Entry_model,-c(Dependent,ID))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
+  Param_best = coef(cvfit, s = "lambda.min")
+  Estimation = predict(cvfit, as.matrix(select(Entry_model,-c(Dependent,ID))), s="lambda.min")
+  r2 = R2_calc(as.vector(Entry_model$Dependent), Estimation)
+  
+  #as.matrix(Param_best) %>% as.data.frame() %>% rownames_to_column() %>% as_tibble() %>%  filter(! `1` == 0) %>% select(rowname) %>% as_vector() %>% as.vector() -> Keep_covariates
+  #Entry_model %>% select(one_of(c("ID",Keep_covariates))) -> Telomere_param_used
+  #write_tsv(x = Telomere_param_used, path = paste(c("Param_chosen/covariates_",Cell_line,".tsv"),collapse=""))
+  #Model with Genetics 
+  left_join(Entry_model, PRS, by="ID") -> Entry_model
+  Entry_model %>% mutate(PRS_value = as.numeric(PRS_value)) %>% drop_na() -> Entry_model
+  cvfit = cv.glmnet(y=as.vector(Entry_model$Dependent), x=as.matrix(select(Entry_model,-c(Dependent,ID))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
+  Param_best = coef(cvfit, s = "lambda.min")
+  Estimation = predict(cvfit, as.matrix(select(Entry_model,-c(Dependent,ID))), s="lambda.min")
+  r2_genetics = R2_calc(as.vector(Entry_model$Dependent), Estimation)
+  #Output
+  rbind(Variance_explained2,tibble(Telomere=Cell_line, R2_parents= r2, R2_Sex = r2_sex, R2_Cells = r2_cells, R2_BMI = r2_BMI, R2_age=R2_null0, R2_genetics = r2_genetics)) -> Variance_explained2
+}
+PALETTE  =  c("#F8B195","#F67280","#C06C84","#C07C84","#C08C84","#6C5B7B","#355C7D")
+Variance_explained2 %>% mutate(R2_genetics = R2_genetics - R2_parents, R2_parents = R2_parents-R2_BMI, R2_BMI= R2_BMI-R2_Cells, R2_Cells = R2_Cells - R2_Sex,R2_Sex = R2_Sex-R2_age) %>% gather("Model","r2", c("R2_parents","R2_Sex","R2_BMI","R2_Cells","R2_age","R2_genetics")) %>% mutate(Model = fct_relevel(Model,c("R2_genetics","R2_parents", "R2_BMI","R2_Cells","R2_Sex", "R2_age"))) %>%
+  ggplot(aes(x=Telomere, y=r2, fill=Model)) + geom_bar(position="stack", stat="identity") +
+  coord_flip() + theme_bw() + scale_fill_manual(values = PALETTE) -> partition_R2
+SAVE(NAME = "~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Figures/partition_R2.pdf" ,PLOT=partition_R2)
+
+
+Variance_explained2 = tibble()
+for (Cell_line in colnames(Telomere_markers)){
+  if (Cell_line == "Sample"){ next }
+  Telomere_markers %>% select(Cell_line) %>% as_vector() %>% as.vector() %>% as.numeric() -> Dependent
+  
+  Cov -> Cov_to_add
+  Phenotypes_significant %>% mutate(Dependent = Dependent) -> Entry_model
+  
+  
+  left_join(Entry_model, Cov_to_add, by="ID") -> Entry_model
+  Entry_model %>% drop_na() -> Entry_model
+  
+  #####
+  #Age model
+  lm(Dependent ~ Age, Entry_model) ->  Null_0
+  Entry_model %>% mutate(Dependent  = Null_0$residuals) %>% select(-Age) -> Entry_model
+  
+  #Host factors model
+  Entry_model %>% select(-c(Parental_smoking, smk13,age_f, age_m)) -> Entry_model2
+  #1. Sex
+  lm(Dependent ~ Sex, Entry_model) ->  r2_sex
+  r2_sex = R2_calc(as.vector(Entry_model$Dependent), predict(r2_sex))
+  #2. Cells
+  cvfit = cv.glmnet(y=as.vector(Entry_model2$Dependent), x=as.matrix(select(Entry_model2,c("Sex", cell_types))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
+  Estimation = predict(cvfit, as.matrix(select(Entry_model2,c("Sex", cell_types))), s="lambda.min")
   r2_cells = R2_calc(as.vector(Entry_model2$Dependent), Estimation)
   #3. BMI
   cvfit = cv.glmnet(y=as.vector(Entry_model2$Dependent), x=as.matrix(select(Entry_model2,-c(ID,Dependent))), nfolds = 10,type.measure="mse",standardize=T, alpha=1)
@@ -632,13 +797,19 @@ for (Cell_line in colnames(Telomere_markers)){
   Estimation = predict(cvfit, as.matrix(select(Entry_model,-c(Dependent,ID))), s="lambda.min")
   r2_genetics = R2_calc(as.vector(Entry_model$Dependent), Estimation)
   #Output
-  rbind(Variance_explained2,tibble(Telomere=Cell_line, R2_parents= r2, R2_Sex = r2_sex, R2_Cells = r2_cells, R2_BMI = r2_BMI, R2_age=R2_null0, R2_genetics = r2_genetics)) -> Variance_explained2
+  rbind(Variance_explained2,tibble(Telomere=Cell_line, R2_parents= r2, R2_Sex = r2_sex, R2_Cells = r2_cells, R2_BMI = r2_BMI, R2_genetics = r2_genetics)) -> Variance_explained2
 }
-Variance_explained2 %>% mutate(R2_genetics = R2_genetics - R2_parents, R2_parents = R2_parents-R2_BMI, R2_BMI= R2_BMI-R2_Cells, R2_Cells = R2_Cells - R2_Sex,R2_Sex = R2_Sex-R2_age) %>% gather("Model","r2", c("R2_parents","R2_Sex","R2_BMI","R2_Cells","R2_age","R2_genetics")) %>% mutate(Model = fct_relevel(Model,c("R2_genetics","R2_parents", "R2_BMI","R2_Cells","R2_Sex", "R2_age"))) %>%
-  ggplot(aes(x=Telomere, y=r2, fill=Model)) + geom_bar(position="stack", stat="identity") +
-  coord_flip() + theme_bw() + scale_fill_manual(values = c(wesanderson::wes_palette("Royal2"),wesanderson::wes_palette("Royal1")))
 
+PALETTE  =  c("#000004FF", "#56106EFF", "#BB3754FF", "#F98C0AFF", "#FCFFA4FF")
+Variance_explained2 %>% mutate(Genetics = R2_genetics - R2_parents, Parental = R2_parents-R2_BMI, BMI= R2_BMI-R2_Cells, Cells = R2_Cells - R2_Sex, Sex=R2_Sex) %>% select(-c("R2_parents","R2_Sex","R2_BMI","R2_Cells","R2_genetics")) -> MODEL
+MODEL %>% mutate(Intrinsic = BMI+Cells+Sex ) %>% summarise(mean(Parental), mean(Genetics), mean(Intrinsic))
 
+MODEL %>%
+  gather("Model","R2", c("Parental","Sex","BMI","Cells","Genetics")) %>% mutate(Model = fct_relevel(Model,c("Genetics","Parental", "BMI","Cells","Sex"))) %>%
+  mutate(R2 = ifelse(R2 < 0,0,R2)) %>%
+  ggplot(aes(x=Telomere, y=R2, fill=Model)) + geom_bar(position="stack", stat="identity",width = 0.5) +theme_bw(base_size=12) +
+  coord_flip() + theme_bw() + scale_fill_manual(values = viridis::viridis(5)) -> partition_R2
+SAVE(NAME = "~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Figures/partition_R2_noage.pdf" ,PLOT=partition_R2,Height = 2)
 
 
 ################################
@@ -687,12 +858,19 @@ heritbility_summary %>% select(-c(Pvalue, h2_LD, Sd_LD)) %>% mutate(method="GREM
 heritbility_summary %>% select(-c(Pvalue, h2, Sd)) %>% mutate(method = "LD") -> LD_regression
 colnames(LD_regression) = colnames(GREML)
 rbind(GREML, LD_regression) -> heritability_summary2
-heritability_summary2$Cell_line = rep(c("Naïve T-cells", "Memory T-cells","Lymphocytes","B-cells", "Granulocytes","NK-cells"),2)
+heritability_summary2$Cell_line = rep(c("Na?ve T-cells", "Memory T-cells","Lymphocytes","B-cells", "Granulocytes","NK-cells"),2)
 heritability_summary2 %>% mutate(Error = ifelse((h2+Sd) > 1, 1, h2+Sd )) %>%  ggplot(aes(x = Cell_line, y = h2, fill=method)) + geom_bar(stat="identity",position = "dodge",color="black") + coord_flip() +
   geom_errorbar(aes(ymin=h2, ymax=Error), width=.2,position=position_dodge(.9)) + theme_bw() + scale_fill_manual(values = wesanderson::wes_palette("Royal1")[1:2]) -> Heritability_plot
 heritability_summary2 %>% group_by(method) %>% summarise(median(h2))                                                                                                                                                        
 SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Heritability.pdf") ,PLOT = Heritability_plot)
 
+
+heritability_summary2 %>% filter(method == "GREML") %>% mutate(Error = ifelse((h2+Sd) > 1, 1, h2+Sd )) %>% 
+  mutate(Cell_line=factor(Cell_line, levels= c("Na?ve T-cells","B-cells","Granulocytes", "Lymphocytes","Memory T-cells", "NK-cells"))) %>%
+  ggplot(aes(x = Cell_line, y = h2, fill=Cell_line)) + geom_bar(stat="identity",position = "dodge",col="black", width = 0.5) + coord_flip() +
+  geom_errorbar(aes(ymin=h2, ymax=Error), width=.2,position=position_dodge(.9)) + theme_bw(base_size = 12) +
+  scale_fill_manual(values = viridis::viridis(6)) + xlab(label = "Telomere") + theme(legend.position = "none")  -> Heritability_plot
+SAVE(NAME = Make_path("LLD phenotypes for Sergio/Results/Manuscript/Figures/Heritability_GREML.pdf") ,PLOT = Heritability_plot, Height = 2)
 #########################
 #Prediction of mortality#
 #########################
@@ -731,13 +909,28 @@ for( Phenotype in colnames(select(Predictors,-c("Sample")))){
   cbind(Info2 %>% select(Second_time,Status), select(Cov2, - ID)) %>% as_tibble() %>% mutate(Pheno=Regressor) ->  All_info
   All_info %>% group_by(Status) %>% summarise(n()) %>% print()
   coxph(Surv(Second_time, Status) ~ ., data=All_info) -> res.cox
+  confint(res.cox)["Pheno",] -> CI
   #autoplot(survfit(res.cox), surv.linetype = 'dashed', surv.colour = 'blue',
   #         conf.int.fill = 'dodgerblue3', conf.int.alpha = 0.5, censor = FALSE)
   as.data.frame(summary(res.cox)$coefficients)["Pheno",] %>% as_tibble() %>% mutate(Regressor = Phenotype) -> res.cox
+  mutate(res.cox, CI_low = exp(CI[[1]]), CI_high = exp(CI[[2]])  ) -> res.cox
   rbind(res.cox, Results) -> Results
 }
 arrange(Results, `Pr(>|z|)`)
-ggplot(Results) + geom_bar(aes(x=Regressor, y= -log10(`Pr(>|z|)`) , fill = `exp(coef)` > 1), stat="identity") + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1)) + geom_hline(yintercept = -log10(0.05))
+
+
+  Results %>% mutate(`Odds ratio mortality` = as.numeric(`exp(coef)`), Pvalue= as.numeric(`Pr(>|z|)`), Telomere=Regressor) %>% 
+  ggplot(aes(y=`Odds ratio mortality`,x= Telomere)) + geom_point(aes(col = -log10(Pvalue)), size=4, shape=15) +
+  coord_flip() + theme_bw(base_size = 12) + geom_hline(yintercept=1, linetype="dotted", size=1.5) +
+  geom_errorbar(aes(ymin=as.numeric(CI_low), ymax=as.numeric(CI_high)),width=.2) +
+  scale_colour_viridis_c() -> Forest_mortality
+
+
+SAVE(PLOT = Forest_mortality,NAME ="~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Figures/mortality_associations.pdf", Height = 2)
+SAVE(PLOT = Forest_mortality,NAME ="~/../Resilio Sync/LLD phenotypes for Sergio/Results/Manuscript/Figures/mortality_associations.png", Height = 2)
+
+  
+                                            
 
 
 #CVD development
@@ -789,9 +982,9 @@ colnames(Info_avail) = c("LLDeep", "Methylation", "Genetics", "Olink", "Telomere
 
 #Sasha's suggestion: Make relative to telomere
 Info_avail %>% apply(2,as.numeric) %>% as_tibble() %>%
-filter(! Telomere == 0)  %>% summarise_all(sum) %>% gather(Data_layer,Number_participants) %>% mutate(Data_layer = as.factor(Data_layer),Data_layer = fct_relevel(Data_layer, "Telomere", "LLDeep","Genetics","Methylation","Olink","sjTREC","Methylation_age")) %>%
+filter(! Telomere == 0)  %>% summarise_all(sum) %>% select(-Olink) %>% gather(Data_layer,Number_participants) %>% mutate(Data_layer = as.factor(Data_layer),Data_layer = fct_relevel(Data_layer, "Telomere", "LLDeep","Genetics","Methylation","sjTREC","Methylation_age")) %>%
   ggplot(aes(x=Data_layer, y=Number_participants)) + geom_bar(stat="identity") + theme_bw() + coord_flip() +
-scale_x_discrete(labels=c("GenID" = "Genetics", "MethID" ="Methylation", "OlinkID" = "Proteomics", "Telomere_ID"="Telomere_length", "LLDeep"="Phenotypes")) 
+scale_x_discrete(labels=c("GenID" = "Genetics", "MethID" ="Methylation", "Telomere_ID"="Telomere_length", "LLDeep"="Phenotypes")) 
 
 
 Info_avail %>% apply(2,as.numeric) %>% as_tibble() %>%
