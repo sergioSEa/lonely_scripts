@@ -88,7 +88,7 @@ Impute_telomere_data = function(Telomere_markers){
 
 #Covariates
 Phenotypes <- read_delim("~/Resilio Sync/LLD phenotypes for Sergio/New Phenotypes clean /Merged_Phenotypes_LLD.csv", delim="|")
-Phenotypes %>% select(ID,Age, Sex) -> Covariates
+Phenotypes %>% dplyr::select(ID,Age, Sex) -> Covariates
 
 #CMV data
 CMV_raw = read_csv("CMV/Data/CMV_data.csv") ; CMV_info = read_csv("CMV/Data/CMV_probes_info.csv")
@@ -366,8 +366,85 @@ for (Bug in Prevalent){
 Microbial_associations %>% filter(! Feature %in% c("(Intercept)", "Age", "Sex" )) %>% mutate(FDR = p.adjust(`Pr(>|t|)`, "fdr" )) %>%
   arrange(FDR) 
 
+##Since association will be weak, in order to avoud multiple test correction lost of power, we performe a prediction task using taxonomy balances
+Run_balance_analysis = function(Balance_input, Pseudo, with_cov = T, lambda=1){
+  set.seed(50)
+  Balance_input2 = as.data.frame(select(Balance_input, -c(ID, CMV_presence, Age, Sex)) + Pseudo/2)
+  #Split dataset
+  tf$random$set_seed(0)
+  trainIndex <- sample(1:nrow( Balance_input2), 0.8 * nrow(Balance_input2))
+  #Train set
+  xTrain <- Balance_input2[trainIndex,]
+  yTrain <- as.factor(Balance_input$CMV_presence[trainIndex])
+  #Test set
+  xTest <- Balance_input2[-trainIndex,]
+  yTest <-as.factor(Balance_input$CMV_presence[-trainIndex])
+  
+  if (with_cov == T){
+    partial <- glm( CMV_presence ~ Age + Sex , data= Balance_input[trainIndex,] , family='binomial')
+    model=codacore( xTrain ,   yTrain ,offset = predict(partial), logRatioType = 'balances', lambda = lambda) #offset in logit space
+    
+    print("Train results")
+    partialAUC = pROC::auc(pROC::roc(yTrain, predict(partial), quiet=T))
+    codacoreAUC = model$ensemble[[1]]$AUC
+    cat("Train set AUC =", codacoreAUC, "\n")
+    cat("AUC gain:", round(100 * (codacoreAUC - partialAUC)), "%", "\n")
+    
+    ##Test
+    yHat_partial <- predict(partial, newdata = Balance_input[-trainIndex,])
+    partialAUC = pROC::auc(pROC::roc(yTest, yHat_partial, quiet=T))
+    yHatLogit <- yHat_partial + predict(model, xTest, logits=T)
+    #yHat <- yHatLogit > 0
+    testAUC <- pROC::auc(pROC::roc(yTest, yHatLogit, quiet=T))
+    cat("Test set AUC =", testAUC, "\n")
+    cat("AUC gain test set:", round(100 * (testAUC - partialAUC)), "%", "\n")
+  } else{
+    model=codacore( xTrain ,   yTrain, logRatioType = 'balances', lambda = lambda)
+    print("Train results")
+    codacoreAUC = model$ensemble[[1]]$AUC
+    cat("AUC train:", round(100 * (codacoreAUC)), "%", "\n")
+    #Test
+    yHat <- predict(model, xTest, logits=F)
+    cat("Test set AUC =", pROC::auc(pROC::roc(yTest, yHat, quiet=T)), "\n")
+    
+  }
+  
+  Plot_distr = plot(model)
+  Plot_roc = plotROC(model)
+  Numerator = colnames(xTrain)[getNumeratorParts(model, 1)]
+  Denominator = colnames(xTrain)[getDenominatorParts(model, 1)]
+  
+  cat("Numerator choice: ", Numerator, "\n")
+  cat("Denominator choice: ", Denominator, "\n")
+  
+  as_tibble(getLogRatios(model, xTest)) %>% mutate(CMV_presence = yTest) -> Test_ratios
+  as_tibble(getLogRatios(model, xTrain)) %>% mutate(CMV_presence = yTrain) -> Train_ratios
+  
+  Test_ratios  %>% ggplot(aes(x=CMV_presence, y= `log-ratio1`, fill=CMV_presence) ) +
+    geom_boxplot(outlier.shape = NA) + ggforce::geom_sina() + theme_bw() + coord_flip() + ylab("Log-ratio score") + theme(legend.position = "none") + scale_fill_manual(values = c("#FFA500","#ADD8E6")) +ggtitle("Test set")-> Test_distr
+  Train_ratios %>% mutate(CMV_presence = yTrain)  %>% ggplot(aes(x=CMV_presence, y= `log-ratio1`, fill=CMV_presence) ) + 
+    geom_boxplot(outlier.shape = NA) + ggforce::geom_sina()  + theme_bw() + coord_flip() + ylab("Log-ratio score") + theme(legend.position = "none") + scale_fill_manual(values = c("#FFA500","#ADD8E6")) +ggtitle("Train set") -> Train_distr
+  
+  wilcox.test(filter(Test_ratios, CMV_presence==1)$`log-ratio1`, filter(Test_ratios, CMV_presence==0)$`log-ratio1` ) -> Dif_test
+  wilcox.test(filter(Train_ratios, CMV_presence==1)$`log-ratio1`, filter(Train_ratios, CMV_presence==0)$`log-ratio1` ) -> Dif_train
+  Distributions = Train_distr + Test_distr
+  print(Distributions)
+  cat("Wilcox test of ratio. Test:", Dif_test$p.value, ", Train:", Dif_train$p.value,"\n" )
+}
 
-#####Microbiome FA, how does developing CMV affect your microbiome?
+library (codacore)
+library("tensorflow")
+#For installation I had to use: install_tensorflow(method = 'conda', envname = 'r-reticulate') ; after in creating the envname in the terminal "conda create -n r-reticulate"
+#Microbial2 has relative abundances of all taxonomic level, In the examples included all taxonomic levels are also included togeter.
+as_vector(select(Microbial2, -ID) ) %>% as_vector() -> Abundances ; Pseudo = min(Abundances[!Abundances == 0])
+left_join(left_join(Microbial2, CMV_presence), Covariates) %>% drop_na()  -> Balance_input
+
+#Prevalence filter
+left_join(left_join(select(Microbial2, c("ID",Prevalent)), CMV_presence), Covariates) %>% drop_na()  -> Balance_input
+
+Run_balance_analysis(Balance_input, Pseudo)
+
+#Although we find a ratio that seems interesting in the train dataset, it is not replicable in test. 
 
 
 
