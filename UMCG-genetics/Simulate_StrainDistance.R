@@ -24,7 +24,7 @@ Simulate_sequences = function(Sequence_size=10, Mutation_Probability=0.1, Iterat
 
 
   #assign strains per person
-  list_strains = list(Samples)
+  list_strains = list(Number_samples)
 
   for (i in seq(Number_samples)){
     #How many strains will this person have?
@@ -35,11 +35,11 @@ Simulate_sequences = function(Sequence_size=10, Mutation_Probability=0.1, Iterat
     list_strains[[i]] = Strains_person
     #Add frequency of strain
     if (N_strain == 1){
-      Major = rep(1, n)
-      Minor = rep(0, n)
+      Major = rep(1, Sequence_size)
+      Minor = rep(0, Sequence_size)
     } else {
       runif(1, max=Major_strain_frequency_range[1], min=Major_strain_frequency_range[2]) -> Major
-      variation = runif(n, max=Error_measurement_frequency[1], min=Error_measurement_frequency[2])
+      variation = runif(Sequence_size, max=Error_measurement_frequency[1], min=Error_measurement_frequency[2])
       variation + Major -> Major
       Major[Major > 1] = 1 
       Minor = 1 - Major 
@@ -82,7 +82,7 @@ Simulate_sequences = function(Sequence_size=10, Mutation_Probability=0.1, Iterat
   Wide_observed[is.na(Wide_observed)] = 0
   #We have several columns per position. Get only one, and use the majority variant as the reference (1) and the minor variant(s) as alternative
   Majority = c()
-  for (N in seq(n)){
+  for (N in seq(Sequence_size)){
    colnames(Wide_observed)[grepl( paste0(N,"_") , colnames(Wide_observed))] -> Check
     Wide_observed %>% select(Check) -> Check
     if (dim(Check)[2] == 1){ Majority = c(Majority, colnames(Check)) 
@@ -117,11 +117,3 @@ Simulate_sequences = function(Sequence_size=10, Mutation_Probability=0.1, Iterat
   
   return(list(list_strains, Frequency_df, Observed_frequencies, Wide_observed_ref ))
 }
-
-set.seed(090)
-Simulate_sequences(Sequence_size=10, Mutation_Probability=0.1, Iteration_mutagenesis=10, N_strain_prob=c(0.75, 0.2,0.05),
-                   Major_strain_frequency_range=c(0.98, 0.8), Error_measurement_frequency=c(0.1, 0 ), Number_samples=10) -> Simulation
-
-Simulate_sequences(Sequence_size=10, Mutation_Probability=0.1, Iteration_mutagenesis=10, N_strain_prob=c(0.75, 0.2,0.05),
-                   Major_strain_frequency_range=c(0.98, 0.8), Error_measurement_frequency=c(0.1, 0 ), Number_samples=10) -> Simulation2
-
