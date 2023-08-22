@@ -14,6 +14,19 @@ Set up a password
 Start jupyter
 `jupyter notebook  --ip=0.0.0.0 --no-browser --port “HIGH_NUMER: e.g. 8080”`  
 
+Intructions for *gearshift*
+Jupyter lab is available. To make it work in local browser:
+Start a screen. Start an interactive session.
+`srun --cpus-per-task=1 --mem=1gb --nodes=1 --qos=interactive --time=01:00:00 --pty bash -i`
+Call jupyter
+`jupyter lab --no-browser`
+Copy the httml file it gives, with a token of access.
+Go to your laptop, write:
+`ssh -N -L localhost:ANYNUMBER:localhost:NUMBERGIVENBYJUPUTER airlock+gs-vcompute01 `
+In ANYUNUMBER, start from 8888, go up if it gives an eerror. Change vcompute01 depending on where is the interactive session in.
+Paste the path from jupyter on Chrome.  
+
+
 Some instructions to set up *RStudio*  
 These instructions require Singularity.  
 
