@@ -49,6 +49,15 @@ For instance, I have mount two different paths in two folders in /mnt/ : Syntax:
 
 `singularity instance start --writable --bind run:/run,var-lib-rstudio-server:/var/lib/rstudio-server,database.conf:/etc/rstudio/database.conf,/shares/CIBIO-Storage/CM/scratch/projects/sandreu_phylogenies/:/mnt/project,/shares/CIBIO-Storage/CM/scratch/users/sergio.andreusanchez/:/mnt/home rstudio_instance/ rstudio_instance`  
 
+`singularity instance start \
+    --writable \
+    --bind run:/run \
+    --bind var-lib-rstudio-server:/var/lib/rstudio-server \
+    --bind database.conf:/etc/rstudio/database.conf \
+    --bind /shares/CIBIO-Storage/CM/scratch/projects/sandreu_phylogenies/:/mnt/project \
+    --bind /shares/CIBIO-Storage/CM/scratch/users/sergio.andreusanchez/:/mnt/home \
+    rstudio_instance/ rstudio_instance`
+
 
 5.  Inside a screen, launch this command  
 `singularity shell --writable rstudio_instance instance://rstudio_instance`  
