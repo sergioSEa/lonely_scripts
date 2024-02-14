@@ -65,10 +65,10 @@ For instance, I have mount two different paths in two folders in /mnt/ : Syntax:
 
 6. Launch the actual rstudio server session  
 
-`PASSWORD="pass123" /usr/lib/rstudio-server/bin/rserver --auth-none=0 --auth-pam-helper-path=pam-helper --server-user=$(whoami) --auth-timeout-minutes=0 --auth-stay-signed-in-days=30 --www-port 8786`   
+`PASSWORD="XXXX" /usr/lib/rstudio-server/bin/rserver --auth-none=0 --auth-pam-helper-path=pam-helper --server-user=$(whoami) --auth-timeout-minutes=0 --auth-stay-signed-in-days=30 --www-port XXXX`   
 
 The port you choose are the last numbers.  
 
 7. Exit the screen and access from the browser at the address:  
-`http://{cm3,cm4,cm5}.cibio.unitn.it:<open_port_you_chose>`
+`http://{direction_ssh}:<open_port_you_chose>`
 
