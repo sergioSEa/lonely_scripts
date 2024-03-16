@@ -57,7 +57,8 @@ For instance, I have mount two different paths in two folders in /mnt/ : Syntax:
     --bind /shares/CIBIO-Storage/CM/scratch/projects/sandreu_phylogenies/:/mnt/project \
     --bind /shares/CIBIO-Storage/CM/scratch/users/sergio.andreusanchez/:/mnt/home \
     rstudio_instance/ rstudio_instance`
-
+OR  
+export SINGULARITY_BIND="/shares/CIBIO-Storage/CM/scratch/projects/sandreu_phylogenies/:/mnt/project,/shares/CIBIO-Storage/CM/scratch/users/sergio.andreusanchez/:/mnt/home"
 
 5.  Inside a screen, launch this command  
 `singularity shell --writable rstudio_instance instance://rstudio_instance`  
