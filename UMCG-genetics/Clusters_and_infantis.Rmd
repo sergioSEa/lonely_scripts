@@ -1,0 +1,971 @@
+---
+title: "Notebook LLNEXT: Analysis clusters/enterotypes and B.longum subspecies"
+output: html_notebook
+---
+
+
+```{r,,warning=FALSE, message=FALSE}
+library(tidyverse)
+library(vegan)
+library(ape)
+library(cluster)
+library(viridis)
+library(ggnewscale)
+library(pals)
+library(patchwork)
+
+library(coda4microbiome)
+library(tidymodels)
+library(bonsai)
+library(lightgbm)
+library(pROC)
+
+library(lmerTest)
+```
+
+# Part 1: Clustering
+
+1. Read MP4 table (normal)
+```{r, warning=FALSE, message=FALSE}
+df <-read.delim("~/Documents/PhD/LL_NEXT/Transmission/metadata/LLNEXT_metaphlan_4_CLEAN_10_07_2023.txt") %>% rownames_to_column("NG_ID")  %>% as_tibble()
+#Filter to early timepoint
+#There are 2 infants with more than one timepoint ; we arrange accoridng to exact_age_at_collection so that it will keep the earliest timepoint
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/LLNEXT_metadata_03_01_2024.txt") %>% 
+  select(NG_ID, NEXT_ID, Timepoint_categorical, exact_age_days_at_collection)   %>%   filter(Timepoint_categorical == "W2") %>% arrange(exact_age_days_at_collection) %>% dplyr::distinct(NEXT_ID, .keep_all=T ) -> InfoEarly 
+
+df %>% filter(NG_ID %in% InfoEarly$NG_ID) -> Early
+
+```
+Alternatively, use the table obtained from MP4 using the database from D. Ennis et al. Nat. Communications 2024 (https://www.nature.com/articles/s41467-024-45209-y)
+```{r, warning=FALSE, message=FALSE}
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/LLNext_MP4_Blongum.txt", skip=1) -> df2
+df2 %>% select(clade_name, one_of(df$NG_ID)) -> df2_2
+df2_2$clade_name -> COLN  
+df2_2 %>% select(-clade_name) %>% t() %>% as_tibble() %>% mutate(NG_ID = colnames(df2_2 %>% select(-clade_name) ), .before=1 ) -> df2_3
+colnames(df2_3) = c("NG_ID", COLN)
+#Need to remove contaminants
+colnames(df2_3)[grepl("s__Sphingomonas_sp_FARSPH", colnames(df2_3) )] -> contaminants
+df2_3 %>% select(-contaminants) -> df2_3
+
+
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/LLNEXT_metadata_03_01_2024.txt") %>% 
+  select(NG_ID, NEXT_ID, Timepoint_categorical, exact_age_days_at_collection)   %>% arrange(exact_age_days_at_collection) %>% dplyr::distinct(NEXT_ID, Timepoint_categorical, .keep_all=T ) -> InfoAll
+df2_3 %>% filter(NG_ID %in% InfoAll$NG_ID) -> df2_3
+
+colnames(df2_3) %>% sapply(function(x){str_replace_all(x, "\\|", ".") } ) -> colnames(df2_3)
+
+#If we want to do the nexr steps using this database, add this line
+df2_3  %>% filter(NG_ID %in% InfoEarly$NG_ID) -> Early
+
+
+```
+
+2. Data preparation
+
+Preparing for some cleaning up. Get functions ready
+
+```{r, warning=FALSE, message=FALSE}
+AST_transform = function(data){
+  asin(sqrt(data/100))
+}
+Filter_names = function(DF, Do_Genus = T){
+  if (Do_Genus == T){
+    DF=DF[,c(1, grep('g__',colnames(DF)) )]
+    Genus_name = colnames(DF)[sapply(strsplit(colnames(DF),"\\."),"length")==6]
+    DF %>% select(c("NG_ID", Genus_name)) -> DF
+    sapply(Genus_name, function(x){  str_split(x,"\\.")[[1]] -> y ; y[length(y)]   }  ) -> N_names
+    colnames(DF) = c("NG_ID", N_names)
+  } else {
+    DF=DF[,c(1, grep('t__',colnames(DF)) )]
+    colnames(DF)=gsub('.*s__','',colnames(DF))
+  }
+  return(DF)
+}
+Filter_XAbundance_in_YPrevalence = function(Early, Min_abundance=0.1, PercentageSamples=10){
+  Prevalence = Early %>% select(-NG_ID) %>% apply(2, function(x){ sum(x>0)/length(x) } ) ; Prevalence = tibble(Taxa = names(Prevalence), Prev = Prevalence )
+  Early %>% select(-NG_ID)  %>% apply(2, function(x){ 100 * sum(x>Min_abundance)/length(x)  } ) -> More_than_10perc_abund
+  Early %>% select(NG_ID, names(More_than_10perc_abund[More_than_10perc_abund>=PercentageSamples] ) ) -> Early_filt
+  return( list(Early_filt, Prevalence) )
+}
+
+
+Do_Genus = F
+
+Filter_names(Early, Do_Genus) -> Early
+```
+Let's make a quick comparison between both abundance profiles
+```{r,  warning=FALSE, message=FALSE}
+Filter_names(df %>% filter(NG_ID %in% InfoEarly$NG_ID), Do_Genus) -> Early1
+Filter_names(df2_3 %>% filter(NG_ID %in% InfoEarly$NG_ID), Do_Genus) -> Early2
+
+Early1 %>% filter(NG_ID %in% Early2$NG_ID) %>% arrange(NG_ID) -> Early1
+Early2 %>% filter(NG_ID %in% Early1$NG_ID) %>% arrange(NG_ID) -> Early2
+
+colnames(Early1)[!colnames(Early1) %in% colnames(Early2)] %>% length()
+colnames(Early2)[!colnames(Early2) %in% colnames(Early1)] %>% length()
+
+Filter_XAbundance_in_YPrevalence(Early1) -> Early1_2
+Filter_XAbundance_in_YPrevalence(Early2) -> Early2_2
+
+colnames(Early1_2)[!colnames(Early1_2) %in% colnames(Early2_2)] %>% length()
+colnames(Early2_2)[!colnames(Early2_2) %in% colnames(Early1_2)] %>% length()
+
+Early1_2 %>% select(-NG_ID) %>%  vegdist(method = "bray") -> Dist_comp1
+Early2_2 %>% select(-NG_ID) %>%  vegdist(method = "bray") -> Dist_comp2
+mantel(Dist_comp2, Dist_comp2)
+
+PCoACheck=cmdscale(Dist_comp1, k = 20, eig = T)
+PCoACheck2=cmdscale(Dist_comp, k = 20, eig = T)
+
+cor(as_tibble(PCoACheck$points)$V1, as_tibble(PCoACheck2$points)$V1)
+cor(as_tibble(PCoACheck$points)$V2, as_tibble(PCoACheck2$points)$V2)
+cor(as_tibble(PCoACheck$points)$V3, as_tibble(PCoACheck2$points)$V3)
+
+```
+
+Filtering based on abundance and prevalence
+```{r, warning=FALSE, message=FALSE}
+Min_abundance = 0.1 # Abundance bigger than 0.1%
+PercentageSamples = 10 #In 10% samples
+
+Filter_XAbundance_in_YPrevalence(Early, Min_abundance, PercentageSamples) -> R ; R[[1]] -> Early_filt ; R[[2]] -> Prevalence 
+
+my_pseudocount_normal=min(select(Early_filt, -NG_ID)[select(Early_filt, -NG_ID)!=0])/2
+
+InfoEarly %>% left_join(Early_filt) %>% drop_na() -> InfoEarly
+#Input data early timepoint
+InfoEarly %>% select(colnames(Early_filt)) %>% select(-NG_ID)   -> Early_filt
+```
+
+
+3. Clustering
+We will start with some visualizations
+
+Start with preparations
+```{r, warning=FALSE, message=FALSE}
+set.seed(123)
+
+Prevalence %>% filter(Prev > 0) -> Remove0s
+Early %>% select(Remove0s$Taxa) -> Early_complete
+#CLR-transform rel. abundances
+CRL_taxa = decostand(Early_filt %>% select(-one_of("NG_ID")), 'clr', pseudocount=my_pseudocount_normal)
+```
+Make plots
+```{r, warning=FALSE, message=FALSE}
+#Correlation taxa
+CRL_taxa  %>% cor()  %>% pheatmap::pheatmap(show_rownames = FALSE, main = "SGB-SGB correlation (CLR)")
+#Visualization taxa and infants
+CRL_taxa  %>% pheatmap::pheatmap(show_rownames = FALSE, main = "Infant clustering and SGB clustering (CLR)")
+#Visualize infant groups
+CRL_taxa %>% vegdist(method = "euc") %>% pheatmap::pheatmap(show_rownames = FALSE, main="Infant clustering (CLR)")
+#Not CLR transformed
+Early_filt %>% select(-one_of("NG_ID")) %>% cor() %>% pheatmap::pheatmap(show_rownames = FALSE, main = "SGB-SGB correlation (Rel abund)")
+Early %>% select(-one_of("NG_ID")) %>%  vegdist(method = "bray") %>% pheatmap::pheatmap(show_rownames = FALSE, main="Infant clustering and SGB clustering (CLR)")
+Early_filt %>% select(-one_of("NG_ID")) %>% pheatmap::pheatmap(show_rownames = FALSE, main="Infant clustering and SGB clustering (Rel abund)")
+```
+
+Try different clustering methods
+```{r, warning=FALSE, message=FALSE}
+#Do_on = "AST" #"CRL"
+Do_on = "relAbundance"
+
+if (Do_on == "CRL"){
+
+  ##WARNING: optimal value may change depending on whether working with SGB / genus  and filtering options
+  
+  #K-medioid ; try methods of cluster choice and stability
+  CRL_taxa %>%  clusGap(., FUNcluster = pam, K.max = 8) -> gap.stat1 ; factoextra::fviz_gap_stat(gap.stat1)
+  #fviz_nbclust(CRL_taxa, FUNcluster = pam, k.max = 8 ) -> sil ; sil
+  CRL_taxa %>% pam(7) -> Clusters1
+  
+  #K-means
+  CRL_taxa %>%  clusGap(., FUNcluster = kmeans, K.max = 8) -> gap.stat2 ; factoextra::fviz_gap_stat(gap.stat2)
+  #fviz_nbclust(CRL_taxa, FUNcluster = kmeans, k.max = 8 ) -> sil ; sil
+  CRL_taxa %>% kmeans(3) -> Clusters2
+
+  #Attach
+  InfoEarly %>% mutate(Cluster_kmean = Clusters2$cluster, Cluster_kmedian = Clusters1$cluster, .before=4  ) -> InfoEarly
+
+  
+  #Other clusterings
+  #fuzzy clusering (allows for each sample to be assign with a probability value to multiple clusters): m controls fuzzines, if close to 1, less fuzzy (exact assignment), if larger, the more fuzzy the clusers become
+  #fclust::FKM(CRL_taxa,  index = "SIL.F", 2:10, stand = 0, RS=1, seed=9877, m = 1.8 ) -> fuzzzy_clusters
+  #summary(fuzzzy_clusters)
+  #DirichletMultinomial. 
+  #library(DirichletMultinomial)
+  #fit <- mclapply(1:7, dmn, count=as.matrix(Early_complete), verbose=TRUE, mc.cores = 7)
+  #lplc <- sapply(fit, laplace)
+  #ggplot() + geom_point(aes(y=lplc, x=seq(1:7))) +theme_bw()
+}else if (Do_on == "relAbundance"){
+
+  Early_filt %>% select(-one_of("NG_ID")) %>% clusGap(., FUNcluster = kmeans, K.max = 8) %>%  factoextra::fviz_gap_stat(.)
+  Early_filt %>% select(-one_of("NG_ID")) %>% factoextra::fviz_nbclust(., FUNcluster = kmeans, k.max = 8 ) 
+  Early_filt %>% select(-one_of("NG_ID"))  %>% kmeans(4) -> Clusters_4
+  
+  Early_filt %>% select(-one_of("NG_ID"))   %>%  clusGap(., FUNcluster = pam, K.max = 10) %>% factoextra::fviz_gap_stat(.)
+  Early_filt %>% select(-one_of("NG_ID"))   %>% pam(8) -> Clusters1
+  
+  
+  InfoEarly %>% mutate(Cluster_kmean = Clusters_4$cluster, Cluster_kmedian = Clusters1$cluster, .before=4  ) -> InfoEarly
+
+
+} else if (Do_on == "AST"){
+  Early_filt %>% select(-one_of("NG_ID")) %>% apply(2, AST_transform)  %>% clusGap(., FUNcluster = kmeans, K.max = 10) %>% factoextra::fviz_gap_stat(.)
+  Early_filt %>% select(-one_of("NG_ID")) %>% apply(2, AST_transform)  %>% factoextra::fviz_nbclust(., FUNcluster = kmeans, k.max = 8 ) 
+  Early_filt %>% select(-one_of("NG_ID")) %>% apply(2, AST_transform)  %>% kmeans(7) -> Clusters_4 
+  factoextra::fviz_nbclust(Early_filt %>% select(-one_of("NG_ID")) %>% apply(2, AST_transform), FUNcluster = kmeans, k.max = 8 ) 
+  
+  Early_filt %>% select(-one_of("NG_ID")) %>% apply(2, AST_transform)  %>%  clusGap(., FUNcluster = pam, K.max = 12) %>% factoextra::fviz_gap_stat(.)
+  Early_filt %>% select(-one_of("NG_ID")) %>% apply(2, AST_transform)  %>% pam(12) -> Clusters1
+
+  InfoEarly %>% mutate(Cluster_kmean = Clusters_4$cluster, Cluster_kmedian = Clusters1$cluster, .before=4  ) -> InfoEarly
+
+  
+}
+
+
+
+
+```
+
+4. Do PCoA analysis
+```{r, warning=FALSE, message=FALSE}
+Distance = "Ait"
+Distance = "Bray"
+if (Distance == "Ait"){
+  Early_filt %>% select(-one_of("NG_ID")) %>% vegdist(method = 'aitchison', pseudocount=my_pseudocount_normal ) -> Dist
+}else if (Distance == "Bray"){
+  Early_filt %>% select(-one_of("NG_ID")) %>% vegdist(method = 'bray' ) -> Dist
+}
+mypcoa_CLR=cmdscale(Dist, k = 20, eig = T)
+mypcoa_CLR$points %>% as_tibble() %>% cbind(InfoEarly, . ) %>% as_tibble() %>% dplyr::rename(PC1 = V1, PC2 = V2, PC3 =V3, PC4=V4, PC5 = V5)  -> PC_early
+Percn_var = round(100*(mypcoa_CLR$eig/sum(mypcoa_CLR$eig)), 2)
+ggplot() + geom_bar(aes(y=Percn_var[1:20], x=seq(1:20 ) ), stat = "identity") + theme_bw() +xlab("Component") + ylab("Variance (%)")
+
+```
+Plot PCoA
+```{r, warning=FALSE, message=FALSE}
+Plot_function = function( PC_early , Show_cluster = F, Bacteria = NA, Cluster = "Cluster_kmean", X="PC1", Y="PC2" ){
+  if (Cluster %in% colnames(PC_early) ){ PC_early[, Cluster] = as.factor( as_vector(PC_early[, Cluster]))  }
+  N_col = length(unique(as_vector(PC_early[,Cluster])))
+  if ( is.na (Bacteria )){
+    if (Show_cluster == F){
+      PC_early %>% ggplot(aes_string(x=X, y=Y)) + geom_point() + theme_bw() + xlab( paste0(X,"(",Percn_var[as.numeric(substring(X, 3, 3))], "%)") ) + ylab( paste0(Y,"(",as.numeric(substring(Y, 3, 3)), "%)") ) +   scale_color_manual(values  = brewer.dark2(N_col))
+    }else{
+      PC_early %>% ggplot(aes_string(x=X, y=Y, col=Cluster)) + geom_point() + theme_bw() + xlab( paste0(X,"(",Percn_var[as.numeric(substring(X, 3, 3))], "%)") ) + ylab( paste0(Y,"(",Percn_var[as.numeric(substring(Y, 3, 3))], "%)") ) +   scale_color_manual(values  = brewer.dark2(N_col))
+    }
+  }else{
+    if (! Bacteria %in% colnames(PC_early) ){ Bacteria = str_replace(Bacteria, "\\.", "\\|") }
+    if (Show_cluster == F){
+      PC_early %>% ggplot(aes_string(x=X, y=Y, col=paste0("`",Bacteria, "`") )) + geom_point() + theme_bw() + scale_color_viridis(direction = -1) + new_scale_color() + xlab( paste0(X,"(",Percn_var[as.numeric(substring(X, 3, 3))], "%)") ) + ylab( paste0(Y,"(",Percn_var[as.numeric(substring(Y, 3, 3))], "%)") ) +   scale_color_manual(values  =brewer.dark2(N_col))
+    }else{  
+      PC_early %>% ggplot(aes_string(x=X, y=Y, col=paste0("`",Bacteria, "`") )) + geom_point() + theme_bw() + scale_color_viridis(direction = -1) + new_scale_color()  + stat_ellipse(aes_string(col=Cluster), type = "t") + xlab( paste0(X,"(",Percn_var[as.numeric(substring(X, 3, 3))], "%)") ) + ylab( paste0(Y,"(",as.numeric(substring(X, 3, 3)), "%)") ) +   scale_color_manual(values  = brewer.dark2(N_col))
+      }
+  }  
+}
+Plot_function(PC_early, Show_cluster = T, Bacteria = NA, X="PC1", Y="PC2" )
+#Plot_function(PC_early, Show_cluster = T, Bacteria = NA, Cluster="Cluster_kmedian" )
+Show = T
+
+C = "Cluster_kmedian"
+if (Do_Genus == T ){
+  Plot_function(PC_early, Show_cluster = Show, Bacteria = "g__Escherichia", Cluster = C ) -> P1
+  Plot_function(PC_early, Show_cluster = Show, Bacteria = "g__Bifidobacterium", Cluster =C ) -> P2
+  Plot_function(PC_early, Show_cluster = Show, Bacteria = "g__Bacteroides", Cluster= C ) -> P3
+  P1 / P2 /P3 + plot_layout(guides = "collect") 
+} else {
+  Plot_function(PC_early, Show_cluster = Show, Bacteria = "Escherichia_coli.t__SGB10068" ) %>% print()
+  Plot_function(PC_early, Show_cluster = Show, Bacteria = "Bifidobacterium_bifidum.t__SGB17256" ) %>% print()
+  if ( "Bifidobacterium_longum.t__SGB17248" %in% colnames(PC_early) ){
+    Plot_function(PC_early, Show_cluster = Show, Bacteria = "Bifidobacterium_longum.t__SGB17248" ) %>% print()
+    Plot_function(PC_early, Show_cluster = Show, Bacteria = "Bacteroides_fragilis.t__SGB1855_group" ) %>% print()
+  } else {
+    Plot_function(PC_early, Show_cluster = Show, Bacteria = "Bifidobacterium_longum.t__subsp.longum"  ) %>% print()
+      Plot_function(PC_early, Show_cluster = Show, Bacteria = "Bacteroides_fragilis.t__SGB1855" ) %>% print()
+
+  }
+  Plot_function(PC_early, Show_cluster = Show, Bacteria = "Bifidobacterium_breve.t__SGB17247" ) %>% print()
+  Plot_function(PC_early, Show_cluster = Show, Bacteria = "Phocaeicola_dorei.t__SGB1815" ) %>% print()
+}
+```
+Plot boxplots of taxa per clusters
+```{r, warning=FALSE, message=FALSE}
+PC_early$Cluster_kmean = as.factor(PC_early$Cluster_kmean)
+Bugs_interst = c( "Escherichia_coli.t__SGB10068",  "Bifidobacterium_bifidum.t__SGB17256", "Bifidobacterium_longum.t__SGB17248", "Bifidobacterium_breve.t__SGB17247", "Bacteroides_fragilis.t__SGB1855_group",  "Phocaeicola_dorei.t__SGB1815", "Bifidobacterium_longum|t__subsp.infantis")
+Allplots = list()
+N = 1
+for (Bug in c(colnames(Early_filt),"Bifidobacterium_longum.t__subsp.infantis")  ){
+  if (Bug %in% colnames(PC_early)){
+    PC_early %>% ggplot(aes_string(x="Cluster_kmean", y=Bug ) ) + geom_boxplot(outlier.shape = NA) + ggforce::geom_sina() +theme_bw() -> plot
+  } else {
+   Filter_names(df2_3, Do_Genus = F) %>% select(c("NG_ID", Bug)) %>% left_join(PC_early, . ) %>% ggplot(aes_string(x="Cluster_kmean", y=Bug ) ) + geom_boxplot(outlier.shape = NA) + geom_point() +theme_bw() ->plot
+  }
+  Allplots[[N]] = plot
+  names(Allplots)[N] = Bug
+  N = N + 1
+  #print(plot)
+}
+
+Early_filt  %>% apply(2, AST_transform) %>% as_tibble() %>% mutate(Cluster = PC_early$Cluster_kmean )%>%  group_by(Cluster) %>% summarise(across(where(is.numeric), median, na.rm = TRUE)) %>% select(-Cluster) %>% pheatmap::pheatmap()
+Allplots["Bifidobacterium_longum.t__subsp.infantis"]
+
+```
+Check which bugs correlate with each Cluster
+```{r, warning=FALSE, message=FALSE}
+
+#Are clusters balanced?
+PC_early %>% group_by(Cluster_kmean) %>% summarise(n())
+
+Association_cluster = tibble()
+
+#CRL_taxa %>% mutate(Cluster =  InfoEarly$Cluster_kmedian, exact_age_days_at_collection = InfoEarly$exact_age_days_at_collection) -> InputModel
+CRL_taxa %>% mutate(Cluster =  InfoEarly$Cluster_kmean, exact_age_days_at_collection = InfoEarly$exact_age_days_at_collection) -> InputModel
+
+for (i in colnames(Early_filt)){
+  if (i == "NG_ID"){ next }
+  Formula = as.formula( paste0( "`", i , "` ~ as.factor(Cluster) + exact_age_days_at_collection" )  )
+  lm(Formula, InputModel) %>% summary() -> D
+  D$coefficients %>% as.data.frame() %>% rownames_to_column("Feature") %>% mutate(SGB = i ) %>% rbind(Association_cluster, . ) %>% as_tibble()  -> Association_cluster
+  
+}
+
+Association_cluster %>% filter(! Feature == "(Intercept)" ) %>% arrange(`Pr(>|t|)`) %>% mutate(FDR = p.adjust(`Pr(>|t|)`, "fdr")) %>% filter(Estimate > 0) %>% filter(Feature == "as.factor(Cluster)2")
+```
+
+
+
+
+5. Clustering prediction
+```{r, warning=FALSE, message=FALSE}
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/LLNEXT_metadata_03_01_2024.txt") %>% 
+  select(NG_ID, NEXT_ID, Timepoint_categorical, exact_age_days_at_collection, Type, FAMILY) -> metadata_long
+Order_time = c("P12", "P28", "B", "W2", "M1", "M2", "M3", "M6", "M9", "M12")
+metadata_long %>% mutate(Timepoint_categorical = factor(Timepoint_categorical, levels = Order_time)) -> metadata_long
+PC_early$Cluster_kmean %>% table()
+```
+
+5.1 Using late timepoints
+
+```{r, warning=FALSE, message=FALSE}
+
+metadata_long %>% filter(Timepoint_categorical %in% c("M6", "M9", "M12") ) -> Late
+
+#Can we predict which cluster where in W2 using lat timepoints?
+df2_3 %>% filter(NG_ID %in% Late$NG_ID ) %>% Filter_names(Do_Genus = F) -> sp_df_late
+Late %>% left_join(PC_early %>% select(NEXT_ID, Cluster_kmean) ) %>% drop_na() -> Late_with_info
+#Get prevalence
+sp_df_late %>% select(-NG_ID) %>% apply(2, function(x){ sum(x!=0)/length(x) } ) -> Prev_analysis
+names(Prev_analysis)[Prev_analysis>0.2] -> Prev_analysis
+
+ForAnalysis = left_join(Late_with_info,sp_df_late)
+Models = list()
+N = 1
+for (C in unique(ForAnalysis$Cluster_kmean) ){
+  print(C)
+  ForAnalysis %>% mutate(Cluster = ifelse(Cluster_kmean==C, T, F), .before=1 ) -> ForAnalysis2
+  ForAnalysis2 %>% group_by(NEXT_ID) %>% summarise(N = n()) %>% filter(N == 1) -> ToRemove
+  ForAnalysis2 %>% filter(!NEXT_ID %in% ToRemove$NEXT_ID) %>% drop_na() -> ForAnalysis2
+  coda_glmnet_longitudinal(x = ForAnalysis2 %>% dplyr::select(Prev_analysis)  %>% as.matrix()  , y=ForAnalysis2$Cluster, x_time=ForAnalysis2$exact_age_days_at_collection, subject_id =ForAnalysis2$NEXT_ID,  nfolds = 5, ini_time=178, end_time = 387 ) -> Model_cluster
+  Models[[N]] = Model_cluster
+  names(Models)[N] = C
+  N = N + 1
+}
+for (Entry in names(Models)){
+ print(Entry)
+ print(Models[[Entry]]$`mean cv-AUC`)
+}
+```
+
+I believe this signature is for C-section babies
+
+5.2 Using mother timepoints
+
+```{r, warning=FALSE, message=FALSE}
+metadata_long %>% filter(Type == "mother" ) -> Mothers
+PC_early %>% left_join(metadata_long) %>% select(FAMILY, Cluster_kmean) %>% left_join(Mothers) %>% drop_na() -> Mothers
+df2_3 %>% filter(NG_ID %in% Mothers$NG_ID ) %>% Filter_names(Do_Genus = F) -> sp_mothers
+sp_mothers %>% select(-NG_ID) %>% apply(2, function(x){ sum(x!=0)/length(x) } ) -> Prev_analysis
+names(Prev_analysis)[Prev_analysis>0.2] -> Prev_analysis
+
+ForAnalysis = left_join(Mothers,sp_mothers)
+ForAnalysis %>% filter(!Timepoint_categorical %in% c("M1", "M2") ) %>% mutate(TimeNumeric = ifelse(Timepoint_categorical == "P12", -24, ifelse(Timepoint_categorical %in% c("P28", "B") , 0, 12  ) )  ) -> ForAnalysis
+Models_mother = list()
+N = 1
+for (C in unique(ForAnalysis$Cluster_kmean) ){
+  print(C)
+  ForAnalysis %>% mutate(Cluster = ifelse(Cluster_kmean==C, T, F), .before=1 ) -> ForAnalysis2
+  ForAnalysis2 %>% group_by(NEXT_ID) %>% summarise(N = n()) %>% filter(N == 1) -> ToRemove
+  dim(ToRemove)
+  ForAnalysis2 %>% filter(!NEXT_ID %in% ToRemove$NEXT_ID) %>% drop_na() -> ForAnalysis2
+  coda_glmnet_longitudinal(x = ForAnalysis2 %>% dplyr::select(Prev_analysis)  %>% as.matrix()  , y=ForAnalysis2$Cluster, x_time=ForAnalysis2$TimeNumeric, subject_id =ForAnalysis2$NEXT_ID,  nfolds = 5, ini_time=-24, end_time = 12, showPlots = F ) -> Model_cluster
+  Models_mother[[N]] = Model_cluster
+  names(Models_mother)[N] = C
+  N = N + 1
+}
+for (Entry in names(Models_mother)){
+ print(Entry)
+ print(Models_mother[[Entry]]$`mean cv-AUC`)
+}
+
+```
+It seems that with mothers we can predict cluster 3 (breve), and with late time points of infants, cluster 2 (bacteroides)
+
+
+
+
+# Part 2: B. longum subspecies
+
+1. Prepare data
+```{r, warning=FALSE, message=FALSE}
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/LLNEXT_metadata_03_01_2024.txt") %>% 
+  select(NG_ID, NEXT_ID, Timepoint_categorical, exact_age_days_at_collection, Type, FAMILY) -> metadata_long
+Order_time = c("P12", "P28", "B", "W2", "M1", "M2", "M3", "M6", "M9", "M12")
+metadata_long %>% mutate(Timepoint_categorical = factor(Timepoint_categorical, levels = Order_time)) -> metadata_long
+#Clean MP4 table
+Filter_names(df2_3, Do_Genus = F) -> sp_df
+#Filter on prevalence. This can/should be improved
+sp_df %>% filter(NG_ID  %in% filter(metadata_long, Type!="mother" )$NG_ID ) -> sp_df_infant
+sp_df %>% filter(NG_ID  %in% filter(metadata_long, Type=="mother" )$NG_ID ) -> sp_df_mother
+
+
+sp_df_infant %>% select(-NG_ID) %>% apply(2, function(x){ sum(x!=0)/length(x) } ) -> Prev_infant
+names(Prev_infant)[Prev_infant>0.2] -> Prevalent_infant
+sp_df_mother %>% select(-NG_ID) %>% apply(2, function(x){ sum(x!=0)/length(x) } ) -> Prev_mother
+names(Prev_mother)[Prev_mother>0.2] -> Prevalent_mother
+
+
+my_pseudocount_normal2=min(select(sp_df, -NG_ID)[select(sp_df, -NG_ID)!=0])/2
+#Get only longum subspecies
+colnames(sp_df)[grepl("Bifidobacterium_longum",colnames(sp_df) )] -> Longum
+metadata_long %>% select(-FAMILY) %>% left_join( select(sp_df, c("NG_ID", Longum)) ) %>% drop_na() -> sp_df2
+
+#CLR transformation
+CRL_taxa_l = decostand(sp_df %>% select(-one_of("NG_ID")), 'clr', pseudocount=my_pseudocount_normal2) %>% as_tibble()
+CRL_taxa_l %>% mutate(NG_ID = sp_df$NG_ID, .before=1 ) -> CRL_taxa_l 
+
+
+#Cross-sectional phenotypes
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/masterfile_cross_sectional_2023_11_15.txt") %>% select(next_id_infant,
+mother_birthcardself_gestational_age_weeks, birth_deliverybirthcard_mode_binary,birth_deliverybirthcard_place_delivery_simple,
+birth_delivery_mode_simple, birth_delivery_mode_complex,mother_birthcard_parity,family_pets_any, 
+infant_birthcard_feeding_mode_after_birth, mother_birthcard_duration_water_broken_min, birth_birthcard_total_duration_delivery_min) -> metadatacross
+#longitudinal phenotypes
+read.delim("~/Documents/PhD/LL_NEXT/Transmission/metadata/masterfile_longitudinal_2023_09_29.txt") %>% as_tibble() %>%
+  select(next_id_infant, SAMPLE_ID, infant_ffq_feeding_mode_simple, infant_ffq_feeding_mode_complex) %>% rename(NEXT_ID = next_id_infant ) %>% as_tibble() %>% drop_na() -> dynamic
+left_join(dynamic, metadata_long %>% mutate(SAMPLE_ID = paste0(NEXT_ID,"_",Timepoint_categorical ) )) %>% select(c(NG_ID, colnames(dynamic))) -> dynamic
+dynamic$NG_ID = sapply(dynamic$NG_ID, function(x){ str_split(x, "_")[[1]][1] } )
+
+
+```
+2. Check mothers with infantis
+```{r, warning=FALSE, message=FALSE}
+
+sp_df2 %>% group_by(Type, `Bifidobacterium_longum|t__subsp.infantis`==0 ) %>% summarise(n())
+
+#Check Mothers with infantis
+sp_df2 %>% filter(Type == "mother") %>% filter(`Bifidobacterium_longum|t__subsp.infantis`!=0) -> Mothers_with_infantis #; Mothers_with_infantis %>% group_by(NEXT_ID) %>% summarise(n()) 
+sp_df2 %>% filter(Type == "mother") %>% filter(NEXT_ID %in% Mothers_with_infantis$NEXT_ID )  %>% gather(Taxa, Rel_abundance, Longum )  %>% ggplot(aes(x=NEXT_ID, y=AST_transform(Rel_abundance), fill=Taxa )) + geom_bar(stat="identity") + theme_bw() + facet_wrap(~Timepoint_categorical) + coord_flip()  +  labs(x = NULL)  + theme(axis.text.y = element_blank()) -> RelAbundanceFig
+sp_df2 %>% filter(Type == "mother") %>% filter(NEXT_ID %in% Mothers_with_infantis$NEXT_ID )  %>% gather(Taxa, Rel_abundance, Longum ) %>% ggplot(aes(x=NEXT_ID, y=Rel_abundance, fill=Taxa )) + geom_bar(position="fill",stat="identity") + theme_bw() + facet_wrap(~Timepoint_categorical) + coord_flip() +  labs(x = NULL) + theme(axis.text.y = element_blank()) -> PercFig
+(RelAbundanceFig | PercFig)  +  plot_layout(guides = "collect") & theme(legend.position = "bottom")
+
+#Which mothers have infantis in more than 1 timepoint?
+Mothers_with_infantis %>% group_by(`Bifidobacterium_longum|t__subsp.infantis` > 0, NEXT_ID) %>% summarise(N = n()) %>% filter(N>1)
+#Preavelnece per tiempoint. mothers
+sp_df2 %>% filter(Type == "mother")  %>% group_by(Timepoint_categorical ) %>%   summarise(N = n(),prevalence = sum(`Bifidobacterium_longum|t__subsp.infantis` > 0) / n()) %>% ggplot(aes(x=Timepoint_categorical, y =prevalence )) + geom_bar(stat="identity") + theme_bw() +  geom_text(aes(label = paste("n =", N)), vjust = -0.5, size = 3) 
+#distribution rel. abundance mother
+sp_df2 %>% filter(Type == "mother") %>% filter(NEXT_ID %in% Mothers_with_infantis$NEXT_ID )  %>% gather(Taxa, Rel_abundance, Longum ) %>% filter(!grepl("unclassified", Taxa)) %>% ggplot(aes(x=AST_transform(Rel_abundance), fill=Taxa)) + geom_histogram(alpha = 0.3) + facet_wrap(~Timepoint_categorical, scales = "free") + theme_bw()
+```
+3. Check infantis prevalence in different timepoints
+```{r, warning=FALSE, message=FALSE}
+#Check infants in different timepoitns
+sp_df2 %>% filter(Type == "infant") %>% mutate(Infantis_present = ifelse(`Bifidobacterium_longum|t__subsp.infantis`!=0, 1, 0) ) -> sp_infant
+CRL_taxa_l %>% select("NG_ID",Prevalent_infant) %>% filter(NG_ID %in% sp_infant$NG_ID)  %>% left_join( select(sp_infant, c(NG_ID, Infantis_present)) )  -> CRL_taxa_l2
+metadata_long %>% left_join(CRL_taxa_l2) %>% drop_na() -> CRL_taxa_l2
+
+
+sp_infant %>% group_by(Timepoint_categorical) %>% summarise(Perc_infantis = mean(Infantis_present)  ) -> Perc_infantis
+Perc_infantis %>% ggplot(aes(x=Timepoint_categorical, y =Perc_infantis  ))+ geom_bar(stat="identity") + theme_bw()
+sp_infant %>%  gather(Taxa, Rel_abundance, Longum ) %>% ggplot(aes(x=Timepoint_categorical, y=Rel_abundance ) ) + geom_boxplot(outlier.shape = NA) + ggforce::geom_sina(alpha=0.3) + theme_bw() + facet_wrap(~Taxa, scales = "free") + coord_flip()
+```
+Drop down unclassified. Break down per feeding mode. 
+```{r, warning=FALSE, message=FALSE}
+sp_infant %>%  gather(Taxa, Rel_abundance, Longum ) %>% left_join(dynamic ) %>% drop_na() %>% filter(!grepl("unclassified", Taxa)) %>% ggplot(aes(x=Timepoint_categorical, y=Rel_abundance, col= Taxa ) ) + geom_boxplot(outlier.shape = NA) + ggforce::geom_sina(alpha=0.3) + theme_bw() + facet_wrap(~Taxa, scales = "free") + coord_flip() + facet_wrap(~infant_ffq_feeding_mode_complex)
+```
+Per infant, calculate its total prevalence, compare to its rel. abundance
+```{r, warning=FALSE, message=FALSE}
+sp_infant %>% group_by(NEXT_ID) %>% summarise( Prevalence_infantis = mean(Infantis_present), N = n()  ) %>% left_join(select(sp_infant, c("NEXT_ID", "Bifidobacterium_longum|t__subsp.infantis","Timepoint_categorical" ,"Infantis_present", "NG_ID"  )) ) %>% left_join( sp_df_infant %>% select(NG_ID, `Bifidobacterium_breve|t__SGB17247`) ) -> I_plot
+I_plot %>% ggplot(aes(x = Prevalence_infantis, y = AST_transform(`Bifidobacterium_longum|t__subsp.infantis`))) + geom_point() + theme_bw()
+
+
+I_plot %>% ggplot(aes(x=`Bifidobacterium_longum|t__subsp.infantis`, y=`Bifidobacterium_breve|t__SGB17247` )) + geom_point() + theme_bw() + facet_wrap(~Timepoint_categorical)
+I_plot %>% ggplot(aes(x = as.factor(Prevalence_infantis), y = AST_transform(`Bifidobacterium_breve|t__SGB17247`))) + geom_point() + geom_boxplot(outlier.shape = NA ) +  theme_bw() + coord_flip()
+
+#Infantis vs breve, presence/absence comparison
+sp_infant %>% left_join( sp_df_infant %>% select(NG_ID, `Bifidobacterium_breve|t__SGB17247`) ) %>% mutate(Breve_present = ifelse(`Bifidobacterium_breve|t__SGB17247` > 0 , 1, 0) ) %>% select(NEXT_ID, Timepoint_categorical, Infantis_present, Breve_present, `Bifidobacterium_breve|t__SGB17247`, `Bifidobacterium_longum|t__subsp.infantis`) -> Infantis_vs_Breve
+Infantis_vs_Breve %>% group_by(Timepoint_categorical, Infantis_present, Breve_present) %>% summarise(N = n()) %>% mutate(ID = paste0(Infantis_present,Breve_present)  ) %>%  ggplot(aes(x=ID, y=N )) + geom_bar(stat="identity") + facet_wrap(~Timepoint_categorical) + theme_bw()
+Phi_table = tibble()
+Threshold = 0.2
+for (timepoint in unique(Infantis_vs_Breve$Timepoint_categorical) ){
+  Infantis_vs_Breve %>% mutate(Breve_present = ifelse(`Bifidobacterium_breve|t__SGB17247`>Threshold, 1, 0 ) , Infantis_present=ifelse(`Bifidobacterium_longum|t__subsp.infantis`>Threshold, 1, 0 ) ) -> Infantis_vs_Breve2
+  
+  Infantis_vs_Breve2 %>% filter(Timepoint_categorical == timepoint) -> data_tp 
+  cor(data_tp$Infantis_present, data_tp$Breve_present) -> Cor
+  table(data_tp$Infantis_present, data_tp$Breve_present) -> res
+  #print(res)
+  res %>% psych::phi() -> res
+  tibble(Timepoint = timepoint, Phi = res, Cor_coef = Cor) %>% rbind(Phi_table, .) -> Phi_table
+}
+#Just presence has an okay correlation. If you go for higher abydbabces, then they dont really correlate
+  
+```
+Do infants who have infantis at one timepoint tend to lose it?
+```{r, warning=FALSE, message=FALSE}
+Exlore_infantis_gainandloss = function(sp_infant, ID_column = "NEXT_ID", Timpeoint_column = "Timepoint_categorical", Threshold = 0  ){
+  GainLoss = tibble()
+  for (Baby in unique(as_vector(sp_infant[ID_column]) )){
+    sp_infant %>% filter(!!sym(ID_column) == Baby ) -> Infantx
+    Infantx %>% arrange(!!sym(Timpeoint_column)) -> Infantx
+    Infantx %>% mutate(Infantis_present = ifelse( `Bifidobacterium_longum|t__subsp.infantis` > Threshold, 1, 0 )) -> Infantx
+
+    transitions <- diff(Infantx$Infantis_present)
+    
+    gain_indices <- which(transitions == 1) + 1
+    loss_indices <- which(transitions == -1) + 1
+    
+    gain_timepoints <- as_vector(Infantx[Timpeoint_column])[gain_indices]
+    loss_timepoints <-  as_vector(Infantx[Timpeoint_column])[loss_indices]
+    
+    tibble(NEXT_ID = Baby, N_gain = length(gain_timepoints), N_loss = length(loss_timepoints), gain_timepoints=paste(gain_timepoints, collapse=","), loss_timepoints=paste(loss_timepoints, collapse=","), TimesPointsN=dim(Infantx)[1], Timepoints=paste( as_vector(Infantx[Timpeoint_column]), collapse = ",")  ) %>% rbind(GainLoss, . ) -> GainLoss
+  }
+  return(GainLoss)
+}
+Plot_gain_loss = function(GainLoss, ORDER=Order_time ){
+  #Check frquency of losses per timepoint
+GainLoss$loss_timepoints %>% sapply(function(x){str_split(x, ",")[[1]]  } ) %>% unlist() %>% as_tibble() %>% filter(!value == "") %>% mutate(Timepoint = factor(value, levels=ORDER) ) %>%  ggplot(aes(x=Timepoint)) + geom_bar() +theme_bw() + ggtitle("Time Points where B. longum infantis is lost") -> Lost_freq
+GainLoss$gain_timepoints %>% sapply(function(x){str_split(x, ",")[[1]]  } ) %>% unlist() %>% as_tibble()  %>% filter(!value == "") %>% mutate(Timepoint = factor(value, levels=ORDER) ) %>% ggplot(aes(x=Timepoint)) + geom_bar() +theme_bw() +
+   ggtitle("Time Points where B. longum infantis is gained") -> gained_freq
+Lost_freq | gained_freq
+  
+  
+}
+
+GainLoss=Exlore_infantis_gainandloss(sp_infant)
+#do the same but with a minimum abundance of 0.1
+GainLoss2 = Exlore_infantis_gainandloss(sp_infant, Threshold = 0.1)
+
+
+#How frequenct are Longum gains observed
+GainLoss %>% group_by(N_gain) %>% summarise(n())
+#How frequent are lossess
+GainLoss %>% group_by(N_loss) %>% summarise(n())
+#And if we remove late timepoints?
+GainLoss %>% filter(! (grepl("M12", loss_timepoints) | grepl("M12", gain_timepoints) )  ) %>% group_by(N_gain) %>% summarise(n())
+GainLoss %>% filter(! (grepl("M12", loss_timepoints) | grepl("M12", gain_timepoints) )  ) %>% group_by(N_loss) %>% summarise(n())
+#Check frquency of losses per timepoint
+Plot_gain_loss(GainLoss, Order_time)
+
+
+#Do the  oens that start with infantis tend to loss it?
+sp_infant %>% filter(Timepoint_categorical == "M2", Infantis_present == T) -> WithIt
+GainLoss %>% filter(NEXT_ID %in% WithIt$NEXT_ID )
+
+```
+
+
+
+4. Prediciton of infantis using infant's information
+```{r,  warning=FALSE, message=FALSE}
+Variables = c("NEXT_ID", "NG_ID", "Infantis_present", "Timepoint_categorical", "exact_age_days_at_collection" )
+sp_df %>% select("NG_ID", Prevalent_infant)  %>% left_join(sp_infant %>% select(Variables  )  ) %>% drop_na() -> sp_df_model
+sp_df_model %>% mutate(Infantis_present = ifelse(Infantis_present == 1 , T, F) ) -> sp_df_model
+sp_df_model %>% group_by(NEXT_ID,Infantis_present) %>% summarise(N = n()) %>% filter(Infantis_present == T) ->EverInfantis
+
+
+sp_df_model %>% mutate(Ever_Infantis = ifelse(NEXT_ID %in% EverInfantis$NEXT_ID, T, F) ) -> sp_df_model
+sp_df_model %>% group_by(Ever_Infantis) %>% summarise(n())
+sp_df_model %>% distinct(NEXT_ID, .keep_all=T) %>% group_by(Ever_Infantis) %>% summarise(n())
+```
+
+4.1 Ever infantis?
+
+
+```{r, warning=FALSE, message=FALSE}
+# Predicitons Ever infantis presence?
+
+coda_glmnet_longitudinal(x = sp_df_model %>% select(-c(Variables, "Bifidobacterium_longum|t__subsp.infantis", "Ever_Infantis" )) %>% as.matrix() , y=sp_df_model$Ever_Infantis, x_time=sp_df_model$exact_age_days_at_collection, subject_id =sp_df_model$NEXT_ID,  nfolds = 10, ini_time=3, end_time = 436 ) -> Model3
+Model3$`mean cv-AUC`
+Model3$`signature plot`
+
+
+
+#Removing other longum subspecies, in case there are multimappers
+coda_glmnet_longitudinal(x = sp_df_model %>% select(-c(Variables,Longum, "Ever_Infantis" )) %>% as.matrix() , y=sp_df_model$Ever_Infantis, x_time=sp_df_model$exact_age_days_at_collection, subject_id =sp_df_model$NEXT_ID,  nfolds = 10, ini_time=3, end_time = 436 ) -> Model4
+Model4$`mean cv-AUC`
+Model4$`signature plot`
+
+```
+
+4.2 Infantis presence per timepoint?
+```{r, warning=FALSE, message=FALSE}
+AUCs_cross= tibble()
+Variables = c(Variables, "Ever_Infantis")
+Models = list()
+Iter = 1
+#sp_df_model %>% mutate( Infantis_present = ifelse(Infantis_present == T, 1, 0) ) -> sp_df_model
+for (Timepoint in unique(sp_df_model$Timepoint_categorical) ) {
+  print(Timepoint)
+  coda_glmnet(x = sp_df_model %>% filter(Timepoint_categorical==Timepoint) %>% select(-c(Variables, "Bifidobacterium_longum|t__subsp.infantis")) %>% as.matrix() , y=sp_df_model %>% filter(Timepoint_categorical==Timepoint) %>% select(Infantis_present) %>%as_vector(), nfolds = 10 ) -> Model1
+  AUC = Model1$`mean cv-AUC`
+  tibble(Timepoint = Timepoint,  AUC = AUC) %>% rbind(AUCs_cross, . ) -> AUCs_cross
+  Models[[Iter]] = Model1
+  Iter = Iter + 1
+}  
+AUCs_cross %>% mutate( Timepoint = factor(Timepoint, levels=Order_time))  %>% ggplot(aes(x=Timepoint, y=AUC)) + geom_bar(stat = "identity") + theme_bw() + coord_flip()
+
+#For model M6 / M9, check if predictions correlate with abundance
+Model_check = Models[[3]] #4 for M6
+sp_df_model %>% filter(Timepoint_categorical=="M9") %>% mutate(Pred = Model_check$predictions) -> Plotstuff
+Plotstuff %>% ggplot(aes(x=as.factor(Infantis_present), y= Pred  )) + geom_boxplot(outlier.shape =  NA)  + ggforce::geom_sina(aes(col= AST_transform(`Bifidobacterium_longum|t__subsp.infantis`))) + theme_bw()
+Plotstuff %>%  ggplot(aes(x=Pred, y=  AST_transform(`Bifidobacterium_longum|t__subsp.infantis`)))  + geom_point() + theme_bw()
+
+
+```
+
+4.3 Community in one timepoint prediction of infantis presence in other moments
+```{r, warning=FALSE, message=FALSE}
+
+Run_Prediction_Time = function(BL){
+  AUCs_cross2= tibble()
+  Variables = c(Variables, "Ever_Infantis")
+  Models = list()
+  Iter = 1
+  for (Timepoint in unique(sp_df_model$Timepoint_categorical) ) {
+    if (Timepoint == BL){ next }
+    print(Timepoint)
+    #Get infants that are available in W2 and the other timepoint
+    sp_df_model %>% filter(Timepoint_categorical %in% c(BL, Timepoint) ) %>% group_by(NEXT_ID) %>% summarise(N = n()) %>% filter(N > 1)  -> D
+    InputM = sp_df_model %>% filter(NEXT_ID  %in% D$NEXT_ID )
+    coda_glmnet(x = InputM  %>% filter(Timepoint_categorical==BL) %>% select(-c(Variables, "Bifidobacterium_longum|t__subsp.infantis")) %>% as.matrix() , y=InputM %>% filter(Timepoint_categorical==Timepoint) %>% select(Infantis_present) %>%as_vector(), nfolds = 5 ) -> Model1
+    AUC = Model1$`mean cv-AUC`
+    tibble(Timepoint = Timepoint,  AUC = AUC) %>% mutate(Timepoint =Timepoint ) %>% rbind(AUCs_cross2, . ) -> AUCs_cross2
+    Models[[Iter]] = Model1
+    Iter = Iter + 1
+  } 
+  return(AUCs_cross2)
+}
+AUCs_cross_m = tibble()
+for (i in unique(sp_df_model$Timepoint_categorical) ){
+   print(paste0("Running: ", i) )
+   AUCs_cross_m %>% rbind(Run_Prediction_Time(i) %>% mutate(Predicting_time = i) ) -> AUCs_cross_m
+}
+AUCs_cross_m %>% spread(Predicting_time, AUC) %>% as.data.frame() %>% column_to_rownames("Timepoint") %>% as.matrix() -> ForPlot
+ForPlot[Order_time[4:10],Order_time[4:10]] %>%  corrplot::corrplot(method = 'number')  #pheatmap::pheatmap(cluster_rows = F, cluster_cols = F)
+
+
+
+```
+
+
+
+5. Infantis prediction using mother's information
+Here, it is important to consider that twins are taken as independent samples
+These families can be checked with:
+`metadat_temp %>% filter(Type == "infant") %>% group_by(FAMILY) %>% summarise(distinct_next_ids = n_distinct(NEXT_ID)) %>% filter(distinct_next_ids >= 2 )`
+
+```{r, warning=FALSE, message=FALSE}
+#Can we predict based on mother abundance?
+AUCs_mother=tibble()
+for (Timepoint in unique(sp_df_model$Timepoint_categorical) ) {
+  print(Timepoint)
+  
+  metadata_long  %>% filter(Type == "mother" | (Type == "infant" & Timepoint_categorical == Timepoint ) ) -> metadat_temp
+  metadat_temp %>% filter(Type == "infant") %>% select(FAMILY,NG_ID) %>% rename(Infant_id = NG_ID) %>% left_join(metadat_temp, .) %>% drop_na() -> metadat_temp
+  metadat_temp %>% filter(Type == "mother") %>% left_join(sp_df_model %>% select(NG_ID, Infantis_present), by=c("Infant_id" = "NG_ID") ) %>% filter(!Timepoint_categorical %in% c("M1", "M2") ) %>%
+    mutate(TimeNumeric = ifelse(Timepoint_categorical == "P12", -24, ifelse(Timepoint_categorical %in% c("P28", "B") , 0, 12  ) )  ) -> metadat_temp
+  
+  sp_df %>% select(NG_ID, Prevalent_mother) %>% left_join(metadat_temp, .) -> ForModel
+  colnames(metadat_temp) -> RM
+  ForModel %>% drop_na() -> ForModel
+  
+  #Samples with only one timepoint
+  ForModel %>% group_by(NEXT_ID,TimeNumeric) %>% summarise(N = n()) %>% group_by(NEXT_ID) %>% summarise(N2 = n()) %>% filter(N2 == 1 ) -> OnlyOne
+  ForModel %>% filter(! NEXT_ID %in% OnlyOne$NEXT_ID ) -> ForModel
+  
+  coda_glmnet_longitudinal(x = ForModel %>% select(-c(RM)) %>% as.matrix() , y=ForModel$Infantis_present, x_time=ForModel$TimeNumeric , subject_id =ForModel$NEXT_ID,  nfolds = 10, ini_time=-24, end_time = 12 ) -> Model_mother
+  AUC = Model_mother$`mean cv-AUC`
+  tibble(Timepoint = Timepoint,  AUC = AUC) %>% rbind(AUCs_mother, . ) -> AUCs_mother
+  Model_mother$`signature plot`
+
+}
+
+AUCs_mother %>% mutate( Timepoint = factor(Timepoint, levels=Order_time))  %>% ggplot(aes(x=Timepoint, y=AUC)) + geom_bar(stat = "identity") + theme_bw() + coord_flip()
+
+```
+5.2 Mother prediction if infantis ever
+
+```{r, warning=FALSE, message=FALSE}
+#Can we predict based on mother abundance?
+
+metadata_long  %>% filter(Type == "mother"  ) %>% left_join(sp_df_mother)  -> metadat_temp
+sp_df_model %>% select(NG_ID, Ever_Infantis) %>% left_join(metadata_long %>% select(NG_ID, FAMILY ) ) %>% distinct(FAMILY, .keep_all=T) %>% select(-NG_ID) %>% left_join(metadat_temp,. , by="FAMILY" ) -> metadat_temp
+
+metadat_temp  %>% filter(!Timepoint_categorical %in% c("M1", "M2") ) %>% mutate(TimeNumeric = ifelse(Timepoint_categorical == "P12", -24, ifelse(Timepoint_categorical %in% c("P28", "B") , 0, 12  ) )  ) -> metadat_temp
+  
+metadat_temp %>% drop_na() -> ForModel
+#Samples with only one timepoint
+ForModel %>% group_by(NEXT_ID,TimeNumeric) %>% summarise(N = n()) %>% group_by(NEXT_ID) %>% summarise(N2 = n()) %>% filter(N2 == 1 ) -> OnlyOne
+ForModel %>% filter(! NEXT_ID %in% OnlyOne$NEXT_ID ) -> ForModel
+  
+coda_glmnet_longitudinal(x = ForModel %>% select(Prevalent_mother)  %>% as.matrix() , y=ForModel$Ever_Infantis, x_time=ForModel$TimeNumeric , subject_id =ForModel$NEXT_ID,  nfolds = 10, ini_time=-24, end_time = 12 ) -> Model_mother
+AUC = Model_mother$`mean cv-AUC`
+Model_mother$`signature plot`
+```
+
+5.3 Replication
+Using CS-baby
+```{r, warning=FALSE, message=FALSE}
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/CS_Baby_Biome_MP4_Moran_db_24_01_2024.txt", skip=1) -> MP_cs
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/Metadata_EGA_CS_BABY_BIOME.txt") -> metadata_cs
+
+MP_cs$clade_name -> COLN  
+MP_cs %>% select(-clade_name) %>% t() %>% as_tibble() %>% mutate(NG_ID = colnames(MP_cs %>% select(-clade_name) ), .before=1 ) -> MP_cs
+colnames(MP_cs) = c("NG_ID", COLN)
+Filter_names(MP_cs,Do_Genus = F) -> MP_cs
+
+MP_cs$NG_ID = str_replace(MP_cs$NG_ID,"_kneaddata_paired_metaphlan", "")
+
+metadata_cs %>% rename(NG_ID = alias) %>% select(NG_ID,CS_BABY_BIOME_ID, Timepoint_categorical, Timepoint_numeric) %>% mutate(Type = ifelse(Timepoint_categorical == "MOM", "mother", "infant") ) %>% left_join(MP_cs %>% select(NG_ID, c(Longum) ) ) %>% mutate(Infantis_present = ifelse(`Bifidobacterium_longum|t__subsp.infantis` == 0 , 0, 1) ) -> metadata_cs
+TimeOrder = c("W01", "W02", "W03", "W04", "W05", "W06", "M06", "M12", "MOM")
+TimeOrder2 = c(1, 2,3,4,5,6,26,52)
+metadata_cs %>% mutate(Timepoint_categorical =factor(Timepoint_categorical, levels = TimeOrder) ) -> metadata_cs
+
+metadata_cs %>% group_by(Timepoint_categorical) %>% summarise(N = n(), Prev_infantis  = mean(Infantis_present) ) %>% ggplot(aes(x=Timepoint_categorical, y=Prev_infantis)) + geom_bar(stat="identity") + theme_bw() + geom_text(aes(label = paste("n =", N)), vjust = -0.5, size = 3)
+
+#Add infantis ever
+metadata_cs %>% group_by(CS_BABY_BIOME_ID,Infantis_present) %>% summarise(N = n()) %>% filter(Infantis_present == T) ->EverInfantis_CS
+metadata_cs %>% mutate(Ever_infantis = ifelse(CS_BABY_BIOME_ID %in% EverInfantis_CS$CS_BABY_BIOME_ID, 1, 0) ) -> metadata_cs
+
+#Check gains losses of infantis
+Exlore_infantis_gainandloss(metadata_cs %>% filter(Timepoint_categorical!="MOM"), ID_column = "CS_BABY_BIOME_ID", Timpeoint_column = "Timepoint_numeric") -> GainLoss_cs
+Plot_gain_loss(GainLoss_cs, TimeOrder2)
+
+
+```
+Is a model trained in mother at birth timepoint able to reproduce in CS?
+
+```{r, warning=FALSE, message=FALSE}
+Get_AUC_glm = function(Model, Real){
+  predicted_probabilities <- predict(Model, type = "response")
+  auc <- roc(Real, predicted_probabilities)$auc
+  return(auc)
+}
+
+
+#Using the model from previous section
+
+metadata_cs %>% filter(Type=="mother") %>% select(NG_ID) %>% left_join(MP_cs) -> Mother_CS
+Mother_CS %>% select(Model_mother$taxa.name) %>% impute_zeros() %>% apply(2, function( x ){ log10(x)  }  ) %*% Model_mother$`log-contrast coefficients` -> Ratio_scores
+
+metadata_cs %>% filter(Type=="mother") %>% select(-Ever_infantis) %>% left_join(metadata_cs %>% filter(Type=="infant") %>% distinct(CS_BABY_BIOME_ID, .keep_all=T) %>% select(CS_BABY_BIOME_ID, Ever_infantis)   ) %>% mutate(Ratio = Ratio_scores) -> MotherInfo
+
+MotherInfo %>% glm( as.factor(Ever_infantis) ~ Ratio, . , family = binomial() ) -> Model
+Get_AUC_glm(Model, MotherInfo$Ever_infantis)
+#Check the confusion matrix
+predicted_classes <- ifelse(predict(Model, type = "response") > 0.5, 1, 0)
+conf_matrix <- caret::confusionMatrix(factor(predicted_classes), factor(MotherInfo$Ever_infantis))
+
+
+
+
+```
+```{r, warning=FALSE, message=FALSE}
+#Writing a model that is more similar
+coda_glmnet(x = ForModel %>% filter(Timepoint_categorical == "B" ) %>% select(Prevalent_mother)  %>% as.matrix() , y=filter(ForModel, Timepoint_categorical == "B")$Ever_Infantis,  nfolds = 10 ) -> Model_mother2
+
+metadata_cs %>% filter(Type=="mother") %>% select(NG_ID) %>% left_join(MP_cs) -> Mother_CS
+Mother_CS %>% select(Model_mother2$taxa.name) %>% impute_zeros() %>% apply(2, function( x ){ log10(x)  }  ) %*% Model_mother2$`log-contrast coefficients` -> Ratio_scores
+
+metadata_cs %>% filter(Type=="mother") %>% select(-Ever_infantis) %>% left_join(metadata_cs %>% filter(Type=="infant") %>% distinct(CS_BABY_BIOME_ID, .keep_all=T) %>% select(CS_BABY_BIOME_ID, Ever_infantis)   ) %>% mutate(Ratio2 = Ratio_scores) -> MotherInfo
+
+MotherInfo %>% glm( as.factor(Ever_infantis) ~ Ratio2, . , family = binomial() ) -> Model2
+Get_AUC_glm(Model2, MotherInfo$Ever_infantis)
+#Check the confusion matrix
+predicted_classes <- ifelse(predict(Model2, type = "response") > 0.5, 1, 0)
+conf_matrix <- caret::confusionMatrix(factor(predicted_classes), factor(MotherInfo$Ever_infantis))
+
+```
+
+
+6. Infantis prevalence and abundance association with phenotypes
+```{r, warning=FALSE, message=FALSE}
+#Association with phenotypes
+
+
+#Attach to DF of infant samples with infantis information
+left_join(left_join(sp_df_model, metadata_long %>% select("NG_ID", "NEXT_ID") ),  metadatacross %>% rename(NEXT_ID =next_id_infant ) ) %>% left_join(dynamic) -> ForModel
+#abundance of infantis should be CLR-transformed, l2 (infants-only)
+CRL_taxa_l2 %>% select(NG_ID, `Bifidobacterium_longum|t__subsp.infantis` ) -> Toattach
+ForModel %>% select(-`Bifidobacterium_longum|t__subsp.infantis`) %>% left_join(Toattach) -> ForModel
+Associations_phenotypes= tibble()
+for (Pheno in c(colnames(metadatacross), colnames(dynamic), "exact_age_days_at_collection" ) ){
+  if (Pheno %in% c("next_id_infant", "NG_ID", "NEXT_ID", "SAMPLE_ID" ) ){ next }
+  print(Pheno)
+  ForModel %>% filter(!is.na(!!sym(Pheno))) -> ForModel2
+  if (dim(ForModel2)[1] < 50){ next }
+  Formula = paste0( "Ever_Infantis ~ ", Pheno )
+  glm(Formula, ForModel %>% distinct(NEXT_ID, .keep_all=T) , family = binomial() ) %>% summary() -> Model1
+  if (Pheno != "exact_age_days_at_collection"){
+    Formula = paste0( "as.factor(Infantis_present) ~ scale(exact_age_days_at_collection)+ ", Pheno, " + (1|NEXT_ID)" )
+  } else {
+    Formula = paste0( "as.factor(Infantis_present) ~ scale(", Pheno, ") + (1|NEXT_ID)" )
+  }
+  glmer(Formula, ForModel, family = binomial() ) %>% summary() -> Model2
+  if (Pheno != "exact_age_days_at_collection"){
+    Formula = paste0( "`Bifidobacterium_longum|t__subsp.infantis` ~ scale(exact_age_days_at_collection)+", Pheno, " + (1|NEXT_ID)" )
+  } else {
+    Formula = paste0( "`Bifidobacterium_longum|t__subsp.infantis` ~ scale(", Pheno, ") + (1|NEXT_ID)" )
+  }
+  lmerTest::lmer(Formula, ForModel) %>% summary() -> Model3
+  
+  
+  tail(as_tibble(Model1$coefficients),1) %>% mutate(Dependent="Ever_Infantis") %>% select(- `z value`) %>% rename(P=`Pr(>|z|)`) -> R1
+  tail(as_tibble(Model2$coefficients),1) %>% mutate(Dependent="Infantis_present") %>% select(- `z value`) %>%rename(P=`Pr(>|z|)`)   -> R2
+  tail(as_tibble(Model3$coefficients),1) %>% mutate(Dependent="Infantis_abundance") %>% select(- c(`t value`, df)) %>% rename(P=`Pr(>|t|)`)  -> R3
+  
+  if (Pheno %in% colnames(dynamic) ) { rbind(R2, R2) %>% mutate(Phenotype = Pheno) %>% rbind(Associations_phenotypes, . ) ->   Associations_phenotypes 
+  } else {
+  rbind(R1, R2) %>% rbind(R3) %>% mutate(Phenotype = Pheno) %>% rbind(Associations_phenotypes, . ) ->   Associations_phenotypes
+  }
+}
+Associations_phenotypes %>% arrange(P) %>% mutate(FDR = p.adjust(P, "fdr"))
+
+```
+```{r}
+proportions <- ForModel %>%
+  group_by(infant_ffq_feeding_mode_simple)  %>%
+  summarise(proportion = mean(Infantis_present == 1, na.rm = TRUE)) %>% drop_na()
+
+# Create the bar plot
+ggplot(proportions, aes(x = infant_ffq_feeding_mode_simple, y = proportion)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Infant FFQ Feeding Mode", y = "Proportion of infants with ifnantis") +
+  theme_minimal()
+
+proportions2 <- ForModel %>%
+  group_by(infant_ffq_feeding_mode_simple, Timepoint_categorical)  %>%
+  summarise(proportion = mean(Infantis_present == 1, na.rm = TRUE), N = n() ) %>% drop_na()
+ggplot(proportions2, aes(x = infant_ffq_feeding_mode_simple, y = proportion)) +
+  geom_bar(stat = "identity", fill = "skyblue") + facet_wrap(~Timepoint_categorical) + 
+  labs(x = "Infant FFQ Feeding Mode", y = "Proportion of infants with ifnantis") + geom_text(aes(label = N), vjust = -0.5, color = "black", size = 3)  +
+  theme_minimal()
+
+```
+6.2 Are there geographical reasons for the infantis/no infantis?
+```{r }
+library(geosphere)
+
+read_csv("~/Documents/PhD/LL_NEXT/Mantel/Data/LLNEXT_geo_location_municipality.csv") -> Latitude_longitude_info
+metadata_long %>% left_join(Latitude_longitude_info %>% rename(NEXT_ID=next_id_mother) ) %>% drop_na() %>% distinct(NEXT_ID, .keep_all=T) %>% select(-c(Timepoint_categorical,exact_age_days_at_collection, Type))  -> metadata_motherIDs
+sp_infant %>% left_join(metadata_long) %>% select(-c(NG_ID, NEXT_ID)) -> infant_add
+sp_infant %>% left_join(metadata_long) %>% group_by(NEXT_ID) %>% summarise(EverInfantis = as.numeric(any(Infantis_present == 1))) %>% left_join(sp_infant) %>% left_join(metadata_long) %>% distinct(NEXT_ID, .keep_all=T) %>% select( FAMILY,EverInfantis ) -> infant_add
+left_join(metadata_motherIDs %>% distinct(NEXT_ID, .keep_all=T) , infant_add, by="FAMILY") %>% drop_na() %>% distinct(FAMILY, .keep_all=T) -> Infant_with_location
+Infant_with_location %>% dplyr::select(lon, lat) %>% as.matrix()  %>% distm(. ,  fun = distVincentySphere) -> geographical_distance
+
+
+adonis2( geographical_distance ~ Infant_with_location$EverInfantis )
+rownames(geographical_distance) = Infant_with_location$FAMILY ; colnames(geographical_distance) = Infant_with_location$FAMILY
+
+#library(MCMCglmm)
+#library(MASS)
+#prior1<-list(R=list(V=1,fix=1), G=list(G1=list(V=1,nu = 0.001) ) )
+#M1 <- as(ginv(geographical_distance), "dgCMatrix")
+#similarity_matrix <- exp(-geographical_distance)
+#covariance_matrix <- cov(similarity_matrix)
+#solve(covariance_matrix) -> M1
+#M1@Dimnames <- list(Infant_with_location$FAMILY, Infant_with_location$FAMILY)
+#MCMCglmm.object = MCMCglmm(EverInfantis ~ 1,
+#                              random = ~FAMILY, 
+#                              ginverse = list(FAMILY = M1),
+#                              prior = prior1,
+#                              data = as.data.frame(Infant_with_location),
+#                              family = "threshold",nitt = 60000,burnin=20000, thin = 20) 
+#plot(MCMCglmm.object)
+#library(lme4qtl)
+#relmatGlmer( as.factor(EverInfantis) ~ (1|FAMILY), Infant_with_location, relmat = list(FAMILY = geographical_distance), family = binomial("logit") ) -> m1
+#lme4::VarCorr(m1)
+#lme4qtl::VarProp(m1)
+
+
+Infant_with_location %>% group_by(municipality) %>% summarise(Proportion_infantis = mean(EverInfantis), N= n() ) -> ProportionsInfant
+ProportionsInfant %>% filter(N > 5 ) %>% ggplot(aes(x=municipality, y = Proportion_infantis)) + geom_bar(stat="identity") + theme_bw() + coord_flip() + geom_text(aes(label = paste("n =", N )),hjust=-0.5 ,size = 3)
+ProportionsInfant %>% filter(N > 5 ) -> To_test
+Infant_with_location %>% filter(municipality %in% To_test$municipality) -> To_test
+glm(as.factor(EverInfantis)  ~ 1 , To_test, family=binomial()  ) -> D0
+glm(as.factor(EverInfantis)  ~ municipality , To_test, family=binomial()  ) -> D1
+anova(D1, D0, test = "Chisq")
+
+```
+
+
+7. Check the prevalence of infantis in other adults
+
+```{r, warning=FALSE, message=FALSE}
+read_tsv("~/Documents/PhD/LL_NEXT/Transmission/metadata/LLD_MP4Moran.tsv", skip = 1) -> LLD_MP4
+LLD_MP4$clade_name -> COLN  
+LLD_MP4 %>% select(-clade_name) %>% t() %>% as_tibble() %>% mutate(NG_ID = colnames(LLD_MP4 %>% select(-clade_name) ), .before=1 ) -> LLD_MP4
+colnames(LLD_MP4) = c("NG_ID", COLN)
+Filter_names(LLD_MP4,Do_Genus = F) -> LLD_MP4
+colnames(LLD_MP4)[grepl("longum", colnames(LLD_MP4))] -> Longum
+LLD_MP4 %>% summarise(
+    mean_Longum = mean(`Bifidobacterium_longum|t__subsp.infantis`, na.rm = TRUE),
+    count_Longum = n(),
+    prevalence_Longum = mean(`Bifidobacterium_longum|t__subsp.infantis`> 0, na.rm = TRUE)
+  )
+LLD_MP4 %>% filter(`Bifidobacterium_longum|t__subsp.infantis`> 0)
+
+LLD_MP4$NG_ID = str_replace(LLD_MP4$NG_ID, "_metaphlan", "")
+
+Prevalence_LLD = LLD_MP4 %>% select(-NG_ID) %>% apply(2, function(x){ sum(!x==0)/length(x) } )
+To_keep = c("NG_ID", "Bifidobacterium_longum|t__subsp.infantis", names(Prevalence_LLD>10) )
+LLD_MP4 %>% select(To_keep) %>% mutate(Presence_infantis = ifelse(`Bifidobacterium_longum|t__subsp.infantis`>0, 1, 0), .before=-2  ) %>%
+  select(-`Bifidobacterium_longum|t__subsp.infantis`) -> LLD_MP4_filt
+
+
+```
+Check which taxa are associated to the presence of infantis
+```{r, warning=F, message=F}
+Assoc_LLD = tibble()
+LLD_MP4_filt %>% select(-c(Presence_infantis, NG_ID)) %>% decostand(., 'clr', pseudocount=my_pseudocount_normal) %>% mutate(Presence_infantis = LLD_MP4_filt$Presence_infantis, NG_ID= LLD_MP4_filt$NG_ID) -> LLD_MP4_filt_clr
+for (Taxa in names(Prevalence_LLD>10) ){
+  if (Taxa == "Bifidobacterium_longum|t__subsp.infantis") { next }
+  Formula = paste0("as.factor(Presence_infantis) ~ `", Taxa, "`")
+  glm(Formula, LLD_MP4_filt_clr, family=binomial("logit")) -> Res
+  summary(Res)$coefficients %>% as_tibble() %>% tail(1) %>% mutate(Sp = Taxa) %>% rbind(Assoc_LLD, .) -> Assoc_LLD
+  
+}
+
+Assoc_LLD %>% arrange(`Pr(>|z|)`) %>% mutate(FDR = p.adjust(`Pr(>|z|)`) )
+
+```
+Merge with phenotypes and associate
+
+```{r, warning=F, message=F}
+read_delim("~/Documents/GitHub/CMV_Associations/Data/Merged_Phenotypes_LLD.csv", delim = "|") -> metadata_lld
+Translate_IDs = read_tsv("~/Resilio Sync/Transfer/PhD/TMAO_project/rename_LLD.txt") %>% rename(NG_ID = ID, LLID=ID_1) -> Translated
+metadata_lld %>% rename(LLID = ID ) %>% left_join(left_join(Translated, LLD_MP4_filt_clr)) -> metadata_lld_merged
+Assoc_LLD2 = tibble()
+
+for (D in colnames(metadata_lld)){
+    if (D %in%  c("ID", "NG_ID")) { next }
+  Formula = paste0("as.factor(Presence_infantis) ~ `", D, "`")
+  metadata_lld_merged %>% select("Presence_infantis", D) %>% drop_na() -> InputModel
+  InputModel %>% group_by(Presence_infantis) %>% summarise(n()) -> N_infantis
+  if (dim(N_infantis)[1]< 2 ){ next }
+
+  glm(Formula, InputModel, family=binomial("logit")) -> Res
+    summary(Res)$coefficients %>% as_tibble() %>% tail(1) %>% mutate(Phenotype = D, N=dim(InputModel)[1], N_infantis=dim(filter(InputModel, Presence_infantis==1))[1]) %>% rbind(Assoc_LLD2, .) -> Assoc_LLD2
+}
+
+Assoc_LLD2 %>% arrange(`Pr(>|z|)`) %>% filter(N_infantis > 10) %>% mutate(FDR = p.adjust(`Pr(>|z|)`) )
+```
+
