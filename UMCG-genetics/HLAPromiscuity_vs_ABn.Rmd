@@ -1,0 +1,383 @@
+---
+title: "Promiscuity per sample association analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+###Script analysis sample-wise promiscuity per HLA gene.
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(readxl)
+library(gt)
+library(lmerTest)
+```
+
+Load functions
+```{r,warning=FALSE, message=FALSE}
+Clean_missing = function(Data_analysis_a, Skip = c("HLA-DQ") ){
+  for (Allele in Analysis_alleles){
+
+  if (Allele %in% Skip) { next }
+  Data_analysis_a %>% filter(! grepl( str_replace( str_replace( Allele, "HLA-", ""), "B1", "")  , missing) ) -> Data_analysis_a
+  Data_analysis_a[Allele] = as.numeric(as_vector(Data_analysis_a[Allele]))
+
+  }
+  return(Data_analysis_a)
+}
+Normalization = function(original_data){
+  #inverse-rank normal transformation
+  ranked_data <- rank(original_data)
+  # Calculate the inverse rank normalized values
+  inverse_rank_normalized <- qnorm((ranked_data - 0.5) / length(ranked_data))
+  return(inverse_rank_normalized)
+}
+Run_combined_model =  function(Data_analysis, Norm = T, Remove_missing = T, Covariates = "Age + Sex + plate_id", Interaction =F ){
+  for (Allele in Analysis_alleles){
+    if (Allele == "HLA-DQ"){ next }
+    if (Remove_missing == T){
+      Data_analysis %>% filter(! grepl( str_replace( str_replace( Allele, "HLA-", ""), "B1", "")  , missing) ) -> Data_analysis
+    }
+    if (Norm == T){
+      Data_analysis[Allele] = Normalization(as.numeric(as_vector(Data_analysis[Allele])))
+    } else{ Data_analysis[Allele] = as.numeric(as_vector(Data_analysis[Allele])) }
+  }
+  Data_analysis %>% drop_na() -> Data_analysis
+  print(dim(Data_analysis))
+  if (Interaction == F){
+    Model1 = paste0("Total_react ~ ", Covariates, "+`HLA-A`+`HLA-B`+`HLA-C`+`HLA-DP`+`HLA-DRB1`")
+    Model2 = paste0("AB_patho ~ ", Covariates, "+`HLA-A`+`HLA-B`+`HLA-C`+`HLA-DP`+`HLA-DRB1`")
+  } else {
+       Model1 = paste0("Total_react ~ Age + plate_id + `HLA-A`+`HLA-B`+`HLA-C`+Sex*`HLA-DP`+Sex*`HLA-DRB1`")
+    Model2 = paste0("AB_patho ~ Age + plate_id + `HLA-A`+`HLA-B`+`HLA-C`+Sex*`HLA-DP`+Sex*`HLA-DRB1`")
+  }
+  
+  print("All peptides")
+  
+  lm(Model1 ,Data_analysis) %>% summary() %>% print()
+  print("Pathogens")
+  lm(Model2 ,Data_analysis) -> Model
+  Model %>% summary() %>% print()
+  return(Model)
+}
+```
+Read the data for LLD samples
+```{r,warning=FALSE, message=FALSE}
+read_csv("~/Downloads/individual_promiscuity_newprom.csv") -> Promiscuity #Promiscuity values per individual in LLD
+
+#Add ID per sample
+read_excel("~/Resilio Sync/Antibodies_WIS (1)/HLA_LLD/HLASNPsLLDeep_29_34_Aliged_T1DGCoutput.bgl.phased.Small_updfrq.xlsx",  sheet="all_HLA_alleles") %>% select(`#`,pedigree) -> ID
+ID %>% distinct(pedigree) -> ID
+ID %>% mutate(code = seq(1,dim(ID)[1] ) ) -> ID
+
+ID  %>% left_join(Promiscuity) -> HLA_merged
+print( paste0("Columns in HLA_merged: ", paste(colnames(HLA_merged), collapse = ",") ) )
+print(paste0("Size of HLA_merged: ", paste(dim(HLA_merged), collapse=",") ) )
+
+write_tsv(HLA_merged, "~/Resilio Sync/Antibodies_WIS (1)/HLA_LLD/Promiscuity.tsv")
+```
+
+Merge with PhIP-Seq data. PhIP-Seq data will be used to estimate the number of antibody responses against particular pathogen groups
+
+```{r, warning=FALSE, message=FALSE}
+#read PhIP-Seq table, only including ~2,800 peptides prevalent in the popualtion
+read_rds("~/Documents/GitHub/CMV_Associations/Data/Immuno_matrix_postSelection.rds") -> AB
+AB$ID = sapply(AB$ID , function(x){str_split(x, "_")[[1]][2] } )
+AB %>% rename(sample_id = ID ) -> AB
+print(paste0("Size of PhIPSeq data (AB object): ", paste(dim(HLA_merged), collapse=",") ) )
+
+#Get covariates for model
+read_tsv("~/Documents/GitHub/CMV_Associations/Data/PhipSeq_covariates.tsv") -> Cov
+print( paste0("Covariates to incliude in the model:", paste(colnames(Cov), collapse = ",") ) )
+
+#Get annotation on taxonomy
+Annotation = read_excel("~/Resilio Sync/Antibodies_WIS (1)/Results/Supplemenatry_Tables/SupplementaryTable1.xlsx", sheet = 2)
+#Get annotation on whether a taxa is a pathogen
+read_excel("~/Downloads/pathogens_final.xlsx") -> Pathogens
+Annotation %>% filter(Taxa %in% filter(Pathogens, GROUP=="T")$TAXA) ->Pathogen_peptides
+Annotation %>% filter(Taxa %in% filter(Pathogens, GROUP=="F")$TAXA) ->NonPathogen_peptides
+
+
+print("Annotation of taxa included for analysis, pathogenic, no pathogenic or facultative: ")
+Pathogens %>% group_by(GROUP) %>% summarise(n()) %>% print()
+
+
+
+```
+Merging data: Only sampels with covariates and PhIPseq info, will be used. HLA promiscuity information will then be attached. 
+```{r, warning=FALSE, message=FALSE}
+#Merging data
+Cov %>% filter( sample_id %in% AB$sample_id ) %>% left_join(AB) %>% filter(ID %in% HLA_merged$pedigree) %>% filter(! is.na(ID) ) -> Data_analysis
+print(paste0("Size of PhIP-Seq merged information: ", paste(dim(Data_analysis), collapse=",") ) )
+HLA_merged %>% rename(ID = pedigree ) %>% dplyr::select(-one_of(c("code", "...1"))) -> HLA_merged
+print(paste0("Size of HLA_merged: ", paste(dim(HLA_merged), collapse=",") ) )
+
+```
+We will prepare the outcomes: number of antibody responses / antibody responses against pathogens
+```{r, warning=FALSE, message=FALSE}
+
+#Get number of peptides
+Data_analysis %>% select(colnames( select(AB, -sample_id))) -> only_ab
+Data_analysis %>% select(Pathogen_peptides$Peptide) -> only_ab_pathogens
+Data_analysis %>% select(NonPathogen_peptides$Peptide) -> only_ab_nonpathogens
+
+Total_ab = only_ab %>% apply(1,  function(x){ sum(x[!is.na(x)]) } )
+patho_ab = only_ab_pathogens %>% apply(1,  function(x){ sum(x[!is.na(x)]) } )
+nonpatho_ab = only_ab_nonpathogens %>% apply(1,  function(x){ sum(x[!is.na(x)]) } )
+
+
+#Merge data
+left_join( select(Data_analysis, -colnames(only_ab)), HLA_merged %>% select(-X1), by="ID" ) %>% mutate(Total_react = Total_ab, AB_patho = patho_ab, AB_nonpatho= nonpatho_ab) -> Data_analysis2
+
+print(paste0("Size of dataset for analysis (Data_analysis2): ", paste(dim(HLA_merged), collapse=",") ) )
+
+#plot distribution of promiscuity
+Data_analysis2 %>% gather(HLA_type, promiscuity ,7:12) %>% mutate(promiscuity = as.numeric(promiscuity)) %>% ggplot(aes(x=promiscuity)) + geom_histogram() + theme_bw() + facet_wrap(~HLA_type, scales = "free")
+Data_analysis2 %>% gather(Peptide_type, Reactivity_n, c(Total_react, AB_patho) ) %>% ggplot(aes(x=Reactivity_n)) + geom_histogram() + theme_bw() + facet_wrap(~Peptide_type, scales = "free")
+
+
+
+
+```
+
+We will visualize some relationships
+
+```{r, , warning=FALSE, message=FALSE}
+Analysis_alleles = c("HLA-A", "HLA-B", "HLA-C", "HLA-DP", "HLA-DQ",  "HLA-DRB1" )
+
+#relationship between prmiscuity and reactivcity
+Data_analysis2 %>% gather(Peptide_type, Reactivity_n, c(Total_react, AB_patho) ) %>% gather(HLA_type, promiscuity ,7:12) %>% mutate(promiscuity = as.numeric(promiscuity) ) %>%
+  ggplot(aes(x=promiscuity, y=Reactivity_n)) + geom_point() + theme_bw() + facet_wrap(HLA_type~Peptide_type, scales = "free") + geom_smooth(method = "lm")
+
+
+
+#Correlation between promiscuity
+ Data_analysis2 %>% select(Analysis_alleles) %>% apply(2, as.numeric) %>% cor(use = "complete.obs") %>%
+  pheatmap::pheatmap( ., display_numbers = T, fontsize = 10)
+
+
+```
+
+Now, we will run assocaitions between the number of antibody responses and promiscuity. We will focus on HLA class II, and will remove HLA-DQ
+
+
+```{r, warning=FALSE, message=FALSE}
+
+
+Run_combined_model(Data_analysis2, Norm=F,  Remove_missing = T ) -> Model
+
+confint(Model) %>% as.data.frame() %>% rownames_to_column("Feature") -> CONF
+summary(Model)$coefficients %>% as.data.frame() %>% rownames_to_column("Feature") %>% left_join(CONF) %>% filter(grepl("HLA",Feature)) %>% as_tibble() %>% mutate(N_samples = length(Model$residuals)) -> Model
+Model %>% gt()
+
+
+```
+
+And, we will see if there is a Sex specific effect
+```{r, warning=FALSE, message=FALSE}
+
+
+Run_combined_model(Data_analysis2 %>% filter(Sex==2) , Norm=F,  Remove_missing = T, Covariates = "Age+plate_id" ) -> Model_females
+Run_combined_model(Data_analysis2 %>% filter(Sex==1) , Norm=F,  Remove_missing = T, Covariates = "Age+plate_id" ) -> Model_males
+#Interaction
+Run_combined_model(Data_analysis2 , Norm=F,  Remove_missing = T, Interaction = T ) -> Model_int
+
+
+confint(Model_int) %>% as.data.frame() %>% rownames_to_column("Feature") -> CONF
+summary(Model_int)$coefficients %>% as.data.frame() %>% rownames_to_column("Feature") %>% left_join(CONF) %>% filter(grepl("HLA",Feature)) %>% as_tibble() %>% mutate(N_samples = length(Model$residuals)) -> Model
+Model %>% gt()
+
+
+```
+
+
+
+Next, we will add extra samples belonging to the IBD cohort.
+
+```{r, warning=FALSE, message=FALSE}
+#1. Get promiscuity, add IDs to annonymized and translated to IBD IDs
+read_tsv("~/Resilio Sync/Antibodies_WIS (1)/HLA_LLD/HLA_IBD/HLA_IBD_genotype.tsv") %>% select(ID) -> ID_IBD
+read_tsv("~/Downloads/HLA_IBD_promiscuity_anonym_newprom.tsv") -> Promiscuity_IBD
+Promiscuity_IBD %>% mutate(ID = ID_IBD$ID ) -> Promiscuity_IBD
+#translate IDs
+read_delim("~/Resilio Sync/Antibodies_WIS (1)/HLA_LLD/HLA_IBD/IBD_translate.csv", delim=";") -> Translate
+sapply(Translate$`entity:participant_id`, function(x){ str_split(x,"_")[[1]][2] }) -> Real_id
+Translate %>% mutate(ID = Real_id) %>% filter(! ID == "LLDeep" ) -> Translate
+#Put together
+Translate %>% select(collaborator_participant_id, ID) %>% left_join(Promiscuity_IBD) %>% drop_na() %>% select(-ID) %>% rename(ID = collaborator_participant_id) -> Promiscuity_IBD 
+
+print(colnames(Promiscuity_IBD))
+print(dim(Promiscuity_IBD))
+
+
+```
+Prepare metadata and antibody data for IBD
+
+```{r,  warning=FALSE, message=FALSE}
+#2. Prepare PhIPSeq data and merge with PhIPSeq covariates
+#read_rds("~/Documents/GitHub/CMV_Associations/Data/Immuno_matrix_postSelection.rds") -> AB
+#AB$ID = sapply(AB$ID , function(x){str_split(x, "_")[[1]][2] } )
+#AB %>% rename(sample_id = ID ) -> AB
+
+read_tsv("~/Documents/GitHub/CMV_Associations/Data/PhipSeq_covariates.tsv") %>% filter(Disease_status == "IBD") -> Cov_IBD
+#Merge covariates and phipseq
+Cov_IBD %>% filter( sample_id %in% AB$sample_id ) %>% left_join(AB) %>% filter(ID %in% Promiscuity_IBD$ID  ) %>% filter(! is.na(ID) ) -> Data_analysis_IBD
+
+#3. Count number of pathogens and antibodies
+Data_analysis_IBD %>% select(colnames( select(AB, -sample_id))) -> only_ab
+Data_analysis_IBD %>% select(Pathogen_peptides$Peptide) -> only_ab_pathogens
+Data_analysis_IBD %>% select(NonPathogen_peptides$Peptide) -> only_ab_nonpathogens
+
+
+Total_ab = only_ab %>% apply(1,  function(x){ sum(x[!is.na(x)]) } )
+patho_ab = only_ab_pathogens %>% apply(1,  function(x){ sum(x[!is.na(x)]) } )
+nopatho_ab = only_ab_nonpathogens %>% apply(1,  function(x){ sum(x[!is.na(x)]) } )
+
+
+```
+
+Merge data and prepare for analysis
+```{r,warning=FALSE, message=FALSE}
+#4. Merge covariates with number of counts, and promiscuity information
+left_join( select(Data_analysis_IBD, -colnames(only_ab)), Promiscuity_IBD) %>% mutate(Total_react = Total_ab, AB_patho = patho_ab, AB_nonpatho = nopatho_ab) -> Data_analysis_IBD2
+
+#5. Check correaltion matrix between all promiscuities
+correlation_matrix <- Data_analysis_IBD2 %>% select(Analysis_alleles) %>% apply(2, as.numeric) %>% cor(use = "complete.obs") %>%
+  pheatmap::pheatmap( ., display_numbers = T, fontsize = 10)
+
+Data_analysis_IBD2 %>% rename(missing = Missing) -> Data_analysis_IBD2
+
+
+```
+
+
+Run assocaiton only in IBD
+```{r,warning=FALSE, message=FALSE}
+#6. Run association
+Run_combined_model(Data_analysis_IBD2, Norm=F) -> Model2
+
+confint(Model2) %>% as.data.frame() %>% rownames_to_column("Feature") -> CONF
+summary(Model2)$coefficients %>% as.data.frame() %>% rownames_to_column("Feature") %>% left_join(CONF) %>% filter(grepl("HLA",Feature)) %>% as_tibble() %>% mutate(N_samples = length(Model2$residuals)) -> Model
+Model %>% gt()
+
+
+```
+
+Combine IBD and LLD and run mixed-linear model
+
+```{r,warning=FALSE, message=FALSE}
+
+Clean_missing2 = function(Data_analysis_a, Skip = c("HLA-DQ")  ){
+  for (Allele in Analysis_alleles){
+
+  if (Allele %in% Skip){ next }
+  as_vector(Data_analysis_a[ Allele ]) -> prom
+  prom[grepl( str_replace( str_replace( Allele, "HLA-", ""), "B1", "")  , Data_analysis_a$missing)] = NA
+  Data_analysis_a[ Allele ] = prom
+
+  }
+  return(Data_analysis_a)
+  
+}
+
+rbind(Data_analysis2, Data_analysis_IBD2 %>% select(-Promiscuity_all) ) -> Merged_data
+Clean_missing(Merged_data) -> Merged_data2
+
+
+Merged_data2 %>% mutate(HLA2_mean = (`HLA-DP`+`HLA-DRB1`)/2, HLA1_mean=(`HLA-A`+`HLA-B`+`HLA-C`)/3, HLA2_total = (`HLA-DP`+`HLA-DRB1`), HLA1_total= (`HLA-A`+`HLA-B`+`HLA-C`)  ) -> Merged_data2
+
+```
+
+Check models on number of non-res assocaitions:
+1. All HLA in the model
+2. HLA class 2, sum
+
+```{r,warning=FALSE, message=FALSE}
+
+#1.
+lmer(AB_patho ~ Age + Sex + `HLA-A`+`HLA-B`+`HLA-C`+`HLA-DP`+`HLA-DRB1` + (1|Disease_status) + (1|Disease_status:plate_id)  ,Merged_data2) -> Model 
+confint(Model) %>% as.data.frame() %>% rownames_to_column("Feature") -> CONF
+summary(Model)$coefficients %>% as.data.frame() %>% rownames_to_column("Feature") %>% left_join(CONF) %>% filter(grepl("HLA",Feature)) %>% as_tibble() %>% mutate(N_samples = length(residuals(Model)))  -> Model
+#Model %>% gt()
+
+Col = c("HLA-DP" = "#fc4100", "HLA-DRB1" = "#2c4e80")
+forest_plot1 <- Model %>% filter(Feature %in% c("`HLA-DRB1`", "`HLA-DP`" )  ) %>% mutate(Feature = str_replace_all(Feature, "`", "")  )  %>% ggplot(., aes(x = Feature, y = Estimate, ymin = `2.5 %`, ymax = `97.5 %`, color= Feature )) +
+  geom_pointrange() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  coord_flip() +
+  labs(
+    title = "Pathogens",
+    x = "Feature",
+    y = "Estimate"
+  ) + scale_color_manual(values=Col) +
+  theme_minimal() + ylim(-130, 130)
+Merged_data2 %>% gather(Allele, Promiscuity, 7:12) %>% filter(Allele %in% c("HLA-DRB1", "HLA-DP" ) ) %>% ggplot(aes(x=Promiscuity, y = AB_patho, col=Allele)) + geom_point(alpha=0.5) + theme_bw() + geom_smooth(method = "lm") + facet_wrap(~Disease_status) + scale_color_manual(values=Col)
+
+
+
+#2,
+lmer(AB_patho ~ Age + Sex + HLA2_total + (1|Disease_status) + (1|Disease_status:plate_id)  ,Merged_data2) -> Model_tot 
+confint(Model_tot) %>% as.data.frame() %>% rownames_to_column("Feature") -> CONF_tot
+summary(Model_tot)$coefficients %>% as.data.frame() %>% rownames_to_column("Feature") %>% left_join(CONF_tot)  %>% as_tibble() %>% mutate(N_samples = length(residuals(Model_tot )))  -> Model_tot
+
+Model_tot  %>% mutate(Feature = ifelse(Feature == "HLA2_total", "Sum HLA-II promiscuity", Feature ) ) %>% filter(!Feature=="(Intercept)") %>% ggplot(., aes(x = Feature, y = Estimate, ymin = `2.5 %`, ymax = `97.5 %` )) + geom_point(col="red", size=3) +
+    geom_errorbar(aes(ymin = `2.5 %`, ymax = `97.5 %`), width = 0.2) + 
+ geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  coord_flip() + labs(  title = "Pathogens", x = "Feature", y = "Estimate" ) + scale_color_manual(values=Col) + theme_minimal() +  ylim(-60, 60) -> Forest_tot1 #+ ylim(-130, 130)
+
+
+```
+
+we will run the same models but in Non-pathogens
+
+```{r,warning=FALSE, message=FALSE}
+#1
+#lmer(AB_noPatho  ~ Age + Sex + `HLA-A`+`HLA-B`+`HLA-C`+`HLA-DP`+`HLA-DRB1` + (1|Disease_status) + (1|Disease_status:plate_id)  ,Merged_data2 %>% mutate(AB_noPatho = Total_react-AB_patho) ) -> Model2
+lmer(AB_nonpatho  ~ Age + Sex + `HLA-A`+`HLA-B`+`HLA-C`+`HLA-DP`+`HLA-DRB1` + (1|Disease_status) + (1|Disease_status:plate_id)  ,Merged_data2 ) -> Model2
+
+confint(Model2) %>% as.data.frame() %>% rownames_to_column("Feature") -> CONF2
+summary(Model2)$coefficients %>% as.data.frame() %>% rownames_to_column("Feature") %>% left_join(CONF2) %>% filter(grepl("HLA",Feature)) %>% as_tibble() %>% mutate(N_samples = length(residuals(Model2)))  -> Model2
+
+
+forest_plot2 <- Model2 %>% filter(Feature %in% c("`HLA-DRB1`", "`HLA-DP`" )  ) %>% mutate(Feature = str_replace_all(Feature, "`", "")  )  %>% ggplot(., aes(x = Feature, y = Estimate, ymin = `2.5 %`, ymax = `97.5 %`, color= Feature )) +
+  geom_pointrange() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  coord_flip() +
+  labs(
+    title = "Non-pathogen",
+    x = "Feature",
+    y = "Estimate"
+  ) + scale_color_manual(values=Col) +
+  theme_minimal() + ylim(-130, 130)
+
+#2
+#lmer(AB_noPatho ~ Age + Sex + HLA2_total + (1|Disease_status) + (1|Disease_status:plate_id)  ,Merged_data2 %>% mutate(AB_noPatho = Total_react-AB_patho)) -> Model_tot2
+lmer(AB_nonpatho ~ Age + Sex + HLA2_total + (1|Disease_status) + (1|Disease_status:plate_id)  ,Merged_data2 ) -> Model_tot2
+
+
+confint(Model_tot2) %>% as.data.frame() %>% rownames_to_column("Feature") -> CONF2_tot
+summary(Model_tot2)$coefficients %>% as.data.frame() %>% rownames_to_column("Feature") %>% left_join(CONF2_tot)  %>% as_tibble() %>% mutate(N_samples = length(residuals(Model_tot2)))  -> Model_tot2
+
+
+Model_tot2  %>% mutate(Feature = ifelse(Feature == "HLA2_total", "Sum HLA-II promiscuity", Feature ) ) %>% filter(!Feature=="(Intercept)") %>% ggplot(., aes(x = Feature, y = Estimate, ymin = `2.5 %`, ymax = `97.5 %` )) +  geom_point(col="red", size=3) + 
+  geom_errorbar(aes(ymin = `2.5 %`, ymax = `97.5 %`), width = 0.2)  + geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  coord_flip() + labs(  title = "Non-pathogen", x = "Feature", y = "Estimate" ) + scale_color_manual(values=Col) + theme_minimal() + ylim(-60, 60) -> Forest_tot2
+
+
+
+
+```
+
+Save figures
+```{r}
+forest_plot1
+forest_plot2
+ggsave("~/Desktop/Forst_plotPathogens_HLAII.pdf", Forest_tot1)
+ggsave("~/Desktop/Forst_plotNoPathogens_HLAII.pdf", Forest_tot2)
+
+```
+
+
+
+
