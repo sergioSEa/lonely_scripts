@@ -56,3 +56,43 @@ add_spname_to_sgb = function(output_retrieve_taxonomy){
   colnames(df)[SGBs] = paste(Sp_names, names(Sp_names), sep = "|")
   return(df)
 }
+
+
+make_barplots = function(df, id_col = 'ID', top_taxa = 10, rm_cols = c()) {
+  if (length(df) != 0) {
+    df <- dplyr::select(df, -all_of(rm_cols))
+  }
+  
+  # Get top taxa by average abundance
+  taxa_avg_ab <- df %>%
+    dplyr::select(-all_of(id_col)) %>%
+    apply(2, mean)
+  taxa_do <- sort(taxa_avg_ab, decreasing = TRUE)[1:top_taxa]
+  
+  # Subset dataframe to include only top taxa and ID column
+  df_top <- df %>%
+    dplyr::select(all_of(c(id_col, names(taxa_avg_ab))))
+  
+  # Convert to long format
+  df_long <- df_top %>%
+    tidyr::pivot_longer(-all_of(id_col), names_to = "Taxa", values_to = "Abundance")
+  
+  # Label non-top taxa as "Other"
+  df_long <- df_long %>%
+    dplyr::mutate(Taxa = ifelse(Taxa %in% names(taxa_do), Taxa, "Other"))
+  
+  # Normalize to relative abundance
+  df_long <- df_long %>%
+    dplyr::group_by(!!sym(id_col)) %>%
+    dplyr::mutate(RelAbundance = Abundance / sum(Abundance)) %>%
+    dplyr::ungroup()
+  
+  # Plot
+  Plot = ggplot2::ggplot(df_long, ggplot2::aes(x = !!sym(id_col), y = RelAbundance, fill = Taxa)) +
+    ggplot2::geom_bar(stat = "identity") +
+    ggplot2::theme_minimal() +
+    ggplot2::labs(y = "Relative Abundance", x = id_col, fill = "Taxa") +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))  + ggplot2::scale_fill_manual(values=c25)
+
+  return(Plot)
+}
