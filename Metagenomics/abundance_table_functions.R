@@ -22,12 +22,12 @@ extract_taxonomy <- function(taxa_list) {
 }
 
 
-retrieve_taxonomic_level = function(df, taxonomy='t', clean_names=T){
+retrieve_taxonomic_level = function(df, taxonomy='t', clean_names=T,sep='\\|'){
   if (! grepl('_$', taxonomy) ){
     taxonomy = paste0(taxonomy, '__')
   }
   Taxa = colnames(df)
-  clean = Taxa %>% str_split('\\|') %>% sapply( function(taxa){ taxa[length(taxa)] } )
+  clean = Taxa %>% str_split(sep) %>% sapply( function(taxa){ taxa[length(taxa)] } )
   Keep = grepl(taxonomy, clean )
   Keep[1] = T #ID column
   Keep[2] = T #UNCLASSIFIED column
@@ -36,11 +36,10 @@ retrieve_taxonomic_level = function(df, taxonomy='t', clean_names=T){
   if(clean_names == T){
     colnames(df) = clean[Keep]
   }
-  complete_taxonomy = Taxa[Keep] %>% str_split('\\|') %>% extract_taxonomy() %>% as_tibble() %>% drop_na()
+  complete_taxonomy = Taxa[Keep] %>% str_split(sep) %>% extract_taxonomy() %>% as_tibble() %>% drop_na()
   
   return( list(abundance_table = df, taxonomy_table = complete_taxonomy ) )
 }
-
 
 add_spname_to_sgb = function(output_retrieve_taxonomy){
   #Make sure input is a list of two
@@ -56,9 +55,7 @@ add_spname_to_sgb = function(output_retrieve_taxonomy){
   colnames(df)[SGBs] = paste(Sp_names, names(Sp_names), sep = "|")
   return(df)
 }
-
-
-make_barplots = function(df, id_col = 'ID', top_taxa = 10, rm_cols = c()) {
+make_barplots = function(df, id_col = 'ID', top_taxa = 10, Keep_taxa= c(), rm_cols = c()) {
   if (length(df) != 0) {
     df <- dplyr::select(df, -all_of(rm_cols))
   }
@@ -68,7 +65,7 @@ make_barplots = function(df, id_col = 'ID', top_taxa = 10, rm_cols = c()) {
     dplyr::select(-all_of(id_col)) %>%
     apply(2, mean)
   taxa_do <- sort(taxa_avg_ab, decreasing = TRUE)[1:top_taxa]
-  
+  taxa_do = c(names(taxa_do), Keep_taxa) %>% unique() 
   # Subset dataframe to include only top taxa and ID column
   df_top <- df %>%
     dplyr::select(all_of(c(id_col, names(taxa_avg_ab))))
@@ -79,7 +76,7 @@ make_barplots = function(df, id_col = 'ID', top_taxa = 10, rm_cols = c()) {
   
   # Label non-top taxa as "Other"
   df_long <- df_long %>%
-    dplyr::mutate(Taxa = ifelse(Taxa %in% names(taxa_do), Taxa, "Other"))
+    dplyr::mutate(Taxa = ifelse(Taxa %in% taxa_do, Taxa, "Other"))
   
   # Normalize to relative abundance
   df_long <- df_long %>%
@@ -93,6 +90,6 @@ make_barplots = function(df, id_col = 'ID', top_taxa = 10, rm_cols = c()) {
     ggplot2::theme_minimal() +
     ggplot2::labs(y = "Relative Abundance", x = id_col, fill = "Taxa") +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1))  + ggplot2::scale_fill_manual(values=c25)
-
+  
   return(Plot)
 }
